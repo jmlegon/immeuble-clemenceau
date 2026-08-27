@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import AuthGuard from "@/components/AuthGuard";
 import { Shell, Card, Field, DataTable } from "@/components/Shell";
 import { supabase } from "@/lib/supabaseClient";
-import { eur, fdate, todayISO, genererTexteFacture, genererTexteQuittance } from "@/lib/helpers";
+import { eur, fdate, todayISO, genererTexteFacture, genererTexteQuittance, TYPES_DOCUMENT, labelTypeDocument, ajouterMois, joursRestants } from "@/lib/helpers";
 
 const BUCKET = "documents";
 
@@ -17,6 +17,11 @@ function DocumentsInner() {
   const [preview, setPreview] = useState(null);
   const [uploadLotId, setUploadLotId] = useState("");
   const [fichier, setFichier] = useState(null);
+  const [uploadType, setUploadType] = useState("bail");
+  const [uploadTitre, setUploadTitre] = useState("");
+  const [uploadEmission, setUploadEmission] = useState(todayISO());
+  const [uploadExpiration, setUploadExpiration] = useState("");
+  const [uploadErreur, setUploadErreur] = useState("");
   const [chargement, setChargement] = useState(true);
 
   async function charger() {
@@ -56,16 +61,44 @@ function DocumentsInner() {
     charger();
   }
 
+  // La date d'expiration se déduit du type : 10 ans pour un DPE, 6 ans pour
+  // l'électricité, 6 mois pour l'ERP… tout en restant modifiable à la main.
+  function changerType(cle) {
+    setUploadType(cle);
+    const t = TYPES_DOCUMENT.find((x) => x.cle === cle);
+    setUploadExpiration(t?.validiteMois ? ajouterMois(uploadEmission, t.validiteMois) : "");
+  }
+  function changerEmission(d) {
+    setUploadEmission(d);
+    const t = TYPES_DOCUMENT.find((x) => x.cle === uploadType);
+    if (t?.validiteMois) setUploadExpiration(ajouterMois(d, t.validiteMois));
+  }
+
   async function uploaderFichier() {
-    if (!fichier || !uploadLotId) return;
+    setUploadErreur("");
+    if (!fichier || !uploadLotId) { setUploadErreur("Choisissez un lot et un fichier."); return; }
     const path = `${uploadLotId}/${Date.now()}-${fichier.name}`;
     const { error } = await supabase.storage.from(BUCKET).upload(path, fichier);
-    if (error) { alert("Échec de l'envoi : " + error.message); return; }
-    await supabase.from("documents").insert({
-      type: "scan", lot_id: uploadLotId, periode: "", numero: fichier.name,
-      date_emission: todayISO(), fichier_path: path,
+    if (error) { setUploadErreur("Échec de l'envoi : " + error.message); return; }
+
+    const { error: errIns } = await supabase.from("documents").insert({
+      type: uploadType,
+      lot_id: uploadLotId,
+      periode: "",
+      numero: fichier.name,
+      titre: uploadTitre || labelTypeDocument(uploadType),
+      date_emission: uploadEmission || todayISO(),
+      date_expiration: uploadExpiration || null,
+      fichier_path: path,
     });
+    if (errIns) {
+      setUploadErreur(/titre|date_expiration|schema cache/i.test(errIns.message)
+        ? "La migration 02 n'a pas encore été passée dans Supabase (colonnes titre / date_expiration manquantes)."
+        : "Enregistrement impossible : " + errIns.message);
+      return;
+    }
     setFichier(null);
+    setUploadTitre("");
     charger();
   }
 
@@ -124,18 +157,36 @@ function DocumentsInner() {
       )}
 
       <Card>
-        <h2 className="font-serif text-lg mb-3">Archiver un document scanné (père)</h2>
-        <div className="grid md:grid-cols-3 gap-3 items-end">
+        <h2 className="font-serif text-lg mb-3">Archiver un document</h2>
+        <div className="grid md:grid-cols-3 gap-3">
+          <Field label="Type de document">
+            <select className="w-full border border-stone-300 rounded px-2 py-1" value={uploadType} onChange={(e) => changerType(e.target.value)}>
+              {TYPES_DOCUMENT.map((t) => <option key={t.cle} value={t.cle}>{t.label}</option>)}
+            </select>
+          </Field>
           <Field label="Lot concerné">
             <select className="w-full border border-stone-300 rounded px-2 py-1" value={uploadLotId} onChange={(e) => setUploadLotId(e.target.value)}>
               {lots.map((l) => <option key={l.id} value={l.id}>{l.nom}</option>)}
             </select>
           </Field>
+          <Field label="Intitulé (facultatif)">
+            <input className="w-full border border-stone-300 rounded px-2 py-1" value={uploadTitre}
+              onChange={(e) => setUploadTitre(e.target.value)} placeholder={labelTypeDocument(uploadType)} />
+          </Field>
+          <Field label="Établi le">
+            <input type="date" className="w-full border border-stone-300 rounded px-2 py-1" value={uploadEmission}
+              onChange={(e) => changerEmission(e.target.value)} />
+          </Field>
+          <Field label="Valable jusqu'au">
+            <input type="date" className="w-full border border-stone-300 rounded px-2 py-1" value={uploadExpiration}
+              onChange={(e) => setUploadExpiration(e.target.value)} />
+          </Field>
           <Field label="Fichier (PDF, image…)">
             <input type="file" className="w-full text-sm" onChange={(e) => setFichier(e.target.files?.[0] || null)} />
           </Field>
-          <button onClick={uploaderFichier} className="w-full md:w-auto px-4 py-2.5 md:py-1.5 rounded bg-slate-900 text-white text-sm md:h-fit">Envoyer</button>
         </div>
+        {uploadErreur && <p className="text-sm text-red-600 mt-2">{uploadErreur}</p>}
+        <button onClick={uploaderFichier} className="mt-3 w-full md:w-auto px-4 py-2.5 md:py-1.5 rounded bg-slate-900 text-white text-sm">Envoyer</button>
         <p className="text-xs text-stone-500 mt-2">Stocké dans le bucket privé Supabase Storage « {BUCKET} », accessible uniquement aux comptes autorisés.</p>
       </Card>
 
@@ -148,6 +199,7 @@ function DocumentsInner() {
             { key: "type", label: "Type" },
             { key: "lot", label: "Lot" },
             { key: "emis", label: "Émis le" },
+            { key: "validite", label: "Validité" },
             { key: "voir", label: "", action: true },
           ]}
           rows={documents.map((d) => {
@@ -155,10 +207,15 @@ function DocumentsInner() {
             return {
               key: d.id,
               cells: {
-                numero: d.numero,
-                type: <span className="capitalize">{d.type}</span>,
+                numero: d.titre || d.numero,
+                type: labelTypeDocument(d.type),
                 lot: l?.nom || d.lot_id,
                 emis: fdate(d.date_emission),
+                validite: d.date_expiration
+                  ? (joursRestants(d.date_expiration) < 0
+                      ? <span className="text-red-600">périmé le {fdate(d.date_expiration)}</span>
+                      : <span>{fdate(d.date_expiration)}</span>)
+                  : "—",
                 voir: d.fichier_path ? (
                   <button onClick={() => voirFichier(d.fichier_path)} className="text-emerald-700 hover:underline p-1">ouvrir</button>
                 ) : (

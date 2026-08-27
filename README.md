@@ -52,6 +52,7 @@ idempotents, les rejouer ne casse rien.
 | Migration | Ce qu'elle apporte |
 |---|---|
 | `migration-01-depenses-et-suivi.sql` | Table `depenses`, suivi de restitution des dépôts de garantie, reprise de la taxe foncière existante en dépense commune |
+| `migration-02-indexations-et-documents.sql` | Table `indexations` (historique des révisions de loyer), colonnes `titre` et `date_expiration` sur `documents` |
 
 Tant qu'une migration n'est pas passée, les écrans qui en dépendent affichent un message
 le signalant plutôt qu'une page vide.
@@ -61,11 +62,39 @@ le signalant plutôt qu'une page vide.
 Il lui suffit de se rendre sur l'URL Vercel et de se connecter avec le compte que vous aurez créé pour
 lui dans Supabase (étape 1.6). Aucune réinstallation, aucune donnée à migrer.
 
-## 6. Sauvegardes
+## 6. Sauvegardes automatiques
 
-Le plan gratuit Supabase n'inclut pas de sauvegarde automatique. Pensez, une fois par mois par exemple,
-à faire **Database > Backups** (ou un export SQL manuel) et à conserver une copie ailleurs (Google
-Drive, disque externe…). Je peux aussi écrire un script d'export automatique si vous le souhaitez.
+Une action GitHub (`.github/workflows/sauvegarde.yml`) exporte chaque **lundi à 4 h** toutes
+les tables (JSON + CSV) et tous les fichiers du bucket Storage. L'archive est déposée dans les
+artefacts du dépôt, conservés 90 jours.
+
+### Activation — à faire une fois
+
+1. Sur GitHub : **Settings > Secrets and variables > Actions > New repository secret**
+2. Créez deux secrets :
+   - `SUPABASE_URL` = `https://suigvsergpjfoljdtgrr.supabase.co`
+   - `SUPABASE_SERVICE_ROLE_KEY` = la clé **secrète** (Supabase > Project Settings > API Keys,
+     `sb_secret_…`)
+3. Onglet **Actions > Sauvegarde Supabase > Run workflow** pour vérifier tout de suite.
+
+La clé `service_role` contourne le RLS : c'est indispensable pour lire l'ensemble des données
+sans session utilisateur. Elle ne doit exister qu'à deux endroits : le tableau de bord Supabase
+et les secrets GitHub. Ne la collez jamais dans un message, un fichier du dépôt ou `.env.local`.
+
+### Export manuel
+
+```bash
+SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... npm run export
+```
+
+Produit `export/AAAA-MM-JJ/` (dossier ignoré par Git). À copier sur un disque externe ou dans
+votre Drive pour une conservation longue durée.
+
+### Pourquoi les sauvegardes ne sont pas commitées
+
+Elles contiennent des données personnelles de locataires. Dans l'historique Git, elles seraient
+répliquées chez quiconque clone le dépôt et quasi impossibles à effacer en cas de demande de
+suppression. Les artefacts GitHub expirent d'eux-mêmes, ce qui est plus sain.
 
 ## Notes sur les données préchargées
 

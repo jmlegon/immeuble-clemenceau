@@ -3,21 +3,24 @@ import { useEffect, useState } from "react";
 import AuthGuard from "@/components/AuthGuard";
 import { Shell, Card, Badge } from "@/components/Shell";
 import { supabase } from "@/lib/supabaseClient";
-import { eur, fdate, fmois, prochaineOccurrence, joursRestants, moisEntre, moisCourant, moisManquants, ecartVersements } from "@/lib/helpers";
+import { eur, fdate, fmois, prochaineOccurrence, joursRestants, moisEntre, moisCourant, moisManquants, ecartVersements, labelTypeDocument } from "@/lib/helpers";
 
 function DashboardInner() {
   const [lots, setLots] = useState([]);
   const [paiements, setPaiements] = useState([]);
+  const [documents, setDocuments] = useState([]);
   const [chargement, setChargement] = useState(true);
 
   useEffect(() => {
     (async () => {
-      const [{ data: l }, { data: p }] = await Promise.all([
+      const [{ data: l }, { data: p }, { data: d }] = await Promise.all([
         supabase.from("lots").select("*").order("id"),
         supabase.from("paiements").select("*"),
+        supabase.from("documents").select("*"),
       ]);
       setLots(l || []);
       setPaiements(p || []);
+      setDocuments(d || []);
       setChargement(false);
     })();
   }, []);
@@ -60,6 +63,14 @@ function DashboardInner() {
     .filter((l) => l.date_depart && (l.depot_garantie || 0) > 0 && !l.depot_restitue_le)
     .map((l) => ({ lot: l, joursEcoules: -joursRestants(l.date_depart) }))
     .sort((x, y) => y.joursEcoules - x.joursEcoules);
+
+  // ---- Diagnostics et attestations qui périment ----
+  // On alerte trois mois avant : de quoi faire intervenir un diagnostiqueur.
+  const docsAExpirer = documents
+    .filter((d) => d.date_expiration)
+    .map((d) => ({ doc: d, jours: joursRestants(d.date_expiration) }))
+    .filter((x) => x.jours !== null && x.jours <= 90)
+    .sort((x, y) => x.jours - y.jours);
 
   const alertesRevision = lotsOccupes
     .filter((l) => l.revision_jour_mois)
@@ -151,6 +162,31 @@ function DashboardInner() {
             Le dépôt se restitue sous un mois si l'état des lieux de sortie est conforme, deux mois
             sinon. Passé ce délai, il est majoré de 10 % du loyer mensuel par mois de retard.
           </p>
+        </Card>
+      )}
+
+      {docsAExpirer.length > 0 && (
+        <Card className="border-amber-200">
+          <h2 className="font-serif text-lg mb-3">Diagnostics et attestations à renouveler</h2>
+          <div className="space-y-2">
+            {docsAExpirer.map(({ doc, jours }) => {
+              const l = lots.find((x) => x.id === doc.lot_id);
+              return (
+                <div key={doc.id} className="flex items-start justify-between gap-2 text-sm border-b border-stone-100 pb-2 last:border-0 last:pb-0">
+                  <div className="min-w-0">
+                    <span className="font-medium">{doc.titre || labelTypeDocument(doc.type)}</span>
+                    <p className="text-stone-500">{l?.nom || "Immeuble"}</p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-stone-500">{fdate(doc.date_expiration)}</span>
+                    <Badge tone={jours < 0 ? "red" : jours <= 30 ? "amber" : "gray"}>
+                      {jours < 0 ? "périmé" : `dans ${jours} j`}
+                    </Badge>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </Card>
       )}
 

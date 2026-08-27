@@ -1,3 +1,28 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  /* Safari iOS zoome automatiquement sur tout champ dont la police fait
+     moins de 16px, et ne dézoome jamais ensuite. On force donc 16px sur
+     mobile ; la taille d'origine reprend à partir de md. */
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+
+  @media (min-width: 768px) {
+    input,
+    select,
+    textarea {
+      font-size: inherit;
+    }
+  }
+
+  /* Évite le flash gris d'iOS sur chaque appui */
+  a,
+  button {
+    -webkit-tap-highlight-color: transparent;
+  }
+}

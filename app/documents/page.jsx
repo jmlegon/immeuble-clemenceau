@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import AuthGuard from "@/components/AuthGuard";
-import { Shell, Card, Field } from "@/components/Shell";
+import { Shell, Card, Field, DataTable } from "@/components/Shell";
 import { supabase } from "@/lib/supabaseClient";
 import { eur, fdate, todayISO, genererTexteFacture, genererTexteQuittance } from "@/lib/helpers";
 
@@ -104,7 +104,7 @@ function DocumentsInner() {
             </select>
           </Field>
           <Field label="Période"><input type="month" className="w-full border border-stone-300 rounded px-2 py-1" value={periode} onChange={(e) => setPeriode(e.target.value)} /></Field>
-          <button onClick={generer} className="px-3 py-1.5 rounded bg-slate-900 text-white text-sm h-fit">
+          <button onClick={generer} className="w-full md:w-auto px-4 py-2.5 md:py-1.5 rounded bg-slate-900 text-white text-sm md:h-fit">
             {lot?.type === "commercial" ? "Générer la facture" : "Générer la quittance"}
           </button>
         </div>
@@ -134,36 +134,40 @@ function DocumentsInner() {
           <Field label="Fichier (PDF, image…)">
             <input type="file" className="w-full text-sm" onChange={(e) => setFichier(e.target.files?.[0] || null)} />
           </Field>
-          <button onClick={uploaderFichier} className="px-3 py-1.5 rounded bg-slate-900 text-white text-sm h-fit">Envoyer</button>
+          <button onClick={uploaderFichier} className="w-full md:w-auto px-4 py-2.5 md:py-1.5 rounded bg-slate-900 text-white text-sm md:h-fit">Envoyer</button>
         </div>
         <p className="text-xs text-stone-500 mt-2">Stocké dans le bucket privé Supabase Storage « {BUCKET} », accessible uniquement aux comptes autorisés.</p>
       </Card>
 
       <Card>
         <h2 className="font-serif text-lg mb-3">Historique</h2>
-        <table className="w-full text-sm">
-          <thead><tr className="text-left text-stone-500 border-b border-stone-200"><th className="py-1">N°/Nom</th><th>Type</th><th>Lot</th><th>Émis le</th><th></th></tr></thead>
-          <tbody>
-            {documents.map((d) => {
-              const l = lots.find((x) => x.id === d.lot_id);
-              return (
-                <tr key={d.id} className="border-b border-stone-100">
-                  <td className="py-1.5">{d.numero}</td>
-                  <td className="capitalize">{d.type}</td>
-                  <td>{l?.nom || d.lot_id}</td>
-                  <td>{fdate(d.date_emission)}</td>
-                  <td>
-                    {d.fichier_path ? (
-                      <button onClick={() => voirFichier(d.fichier_path)} className="text-emerald-700 hover:underline">ouvrir</button>
-                    ) : (
-                      <button onClick={() => setPreview(d.texte)} className="text-emerald-700 hover:underline">voir</button>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <DataTable
+          empty="Aucun document pour l'instant."
+          columns={[
+            { key: "numero", label: "N°/Nom" },
+            { key: "type", label: "Type" },
+            { key: "lot", label: "Lot" },
+            { key: "emis", label: "Émis le" },
+            { key: "voir", label: "", action: true },
+          ]}
+          rows={documents.map((d) => {
+            const l = lots.find((x) => x.id === d.lot_id);
+            return {
+              key: d.id,
+              cells: {
+                numero: d.numero,
+                type: <span className="capitalize">{d.type}</span>,
+                lot: l?.nom || d.lot_id,
+                emis: fdate(d.date_emission),
+                voir: d.fichier_path ? (
+                  <button onClick={() => voirFichier(d.fichier_path)} className="text-emerald-700 hover:underline p-1">ouvrir</button>
+                ) : (
+                  <button onClick={() => setPreview(d.texte)} className="text-emerald-700 hover:underline p-1">voir</button>
+                ),
+              },
+            };
+          })}
+        />
       </Card>
     </div>
   );

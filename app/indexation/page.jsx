@@ -72,7 +72,7 @@ function IndexationInner() {
                   </p>
                 </div>
               )}
-              <button disabled={!res} onClick={() => appliquer(lot)} className="px-3 py-1.5 rounded bg-slate-900 text-white text-sm disabled:opacity-30">
+              <button disabled={!res} onClick={() => appliquer(lot)} className="w-full md:w-auto px-4 py-2.5 md:py-1.5 rounded bg-slate-900 text-white text-sm disabled:opacity-30">
                 Valider la révision
               </button>
             </div>

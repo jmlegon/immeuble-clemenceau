@@ -42,6 +42,20 @@ compte créé à l'étape 1.6, et voir le tableau de bord avec vos 5 lots déjà
 4. Cliquez sur **Deploy**. Au bout de quelques minutes, vous obtenez une URL du type
    `https://immeuble-clemenceau.vercel.app` — c'est votre application, accessible depuis n'importe où.
 
+## 4 bis. Migrations de la base
+
+Le fichier `supabase/schema.sql` correspond à l'installation initiale. Les évolutions
+ultérieures arrivent sous forme de fichiers `supabase/migration-XX-*.sql`, à passer **dans
+l'ordre**, une seule fois chacun : SQL Editor > New query > coller > Run. Ils sont
+idempotents, les rejouer ne casse rien.
+
+| Migration | Ce qu'elle apporte |
+|---|---|
+| `migration-01-depenses-et-suivi.sql` | Table `depenses`, suivi de restitution des dépôts de garantie, reprise de la taxe foncière existante en dépense commune |
+
+Tant qu'une migration n'est pas passée, les écrans qui en dépendent affichent un message
+le signalant plutôt qu'une page vide.
+
 ## 5. Quand Baptiste rejoint
 
 Il lui suffit de se rendre sur l'URL Vercel et de se connecter avec le compte que vous aurez créé pour

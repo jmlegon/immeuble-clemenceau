@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 const I = { fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinecap: "round", strokeLinejoin: "round" };
@@ -24,20 +25,40 @@ const icones = {
   documents: (
     <svg viewBox="0 0 24 24" {...I}><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" /><path d="M14 2v6h6" /></svg>
   ),
+  depenses: (
+    <svg viewBox="0 0 24 24" {...I}><path d="M6 2h12a1 1 0 011 1v18l-3-2-3 2-3-2-3 2V3a1 1 0 011-1z" /><path d="M9 7h6M9 11h6" /></svg>
+  ),
+  bilan: (
+    <svg viewBox="0 0 24 24" {...I}><path d="M3 21h18" /><rect x="5" y="11" width="3.6" height="7" rx="0.6" /><rect x="10.2" y="6" width="3.6" height="12" rx="0.6" /><rect x="15.4" y="14" width="3.6" height="4" rx="0.6" /></svg>
+  ),
+  plus: (
+    <svg viewBox="0 0 24 24" {...I}><circle cx="5" cy="12" r="1.4" /><circle cx="12" cy="12" r="1.4" /><circle cx="19" cy="12" r="1.4" /></svg>
+  ),
 };
 
 const tabs = [
-  { href: "/dashboard", label: "Tableau de bord", court: "Résumé", icone: "resume" },
+  { href: "/dashboard", label: "Tableau de bord", court: "Résumé", icone: "resume", principal: true },
   { href: "/lots", label: "Lots", court: "Lots", icone: "lots" },
   { href: "/indexation", label: "Indexation", court: "Indexation", icone: "indexation" },
-  { href: "/paiements", label: "Paiements", court: "Paiements", icone: "paiements" },
+  { href: "/paiements", label: "Paiements", court: "Loyers", icone: "paiements", principal: true },
+  { href: "/depenses", label: "Dépenses", court: "Dépenses", icone: "depenses", principal: true },
+  { href: "/bilan", label: "Bilan", court: "Bilan", icone: "bilan", principal: true },
   { href: "/eau", label: "Charges & eau", court: "Eau", icone: "eau" },
   { href: "/documents", label: "Documents", court: "Docs", icone: "documents" },
 ];
 
+// Sur mobile, 8 onglets ne tiennent pas : on garde les 4 plus consultés
+// et le reste passe dans une feuille « Plus ».
+const principaux = tabs.filter((t) => t.principal);
+const secondaires = tabs.filter((t) => !t.principal);
+
 export function Shell({ children }) {
   const pathname = usePathname();
   const router = useRouter();
+  const [plusOuvert, setPlusOuvert] = useState(false);
+
+  // Referme la feuille « Plus » dès qu'on change de page
+  useEffect(() => { setPlusOuvert(false); }, [pathname]);
 
   async function seDeconnecter() {
     await supabase.auth.signOut();
@@ -88,10 +109,39 @@ export function Shell({ children }) {
         {children}
       </main>
 
+      {/* Mobile : feuille « Plus » pour les sections secondaires */}
+      {plusOuvert && (
+        <div className="md:hidden fixed inset-0 z-50 flex flex-col justify-end">
+          <button
+            aria-label="Fermer"
+            onClick={() => setPlusOuvert(false)}
+            className="absolute inset-0 bg-slate-900/50"
+          />
+          <div className="relative bg-white rounded-t-2xl p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] shadow-xl">
+            <div className="w-10 h-1 bg-stone-300 rounded-full mx-auto my-2" />
+            {secondaires.map((t) => {
+              const active = pathname === t.href;
+              return (
+                <Link
+                  key={t.href}
+                  href={t.href}
+                  className={`flex items-center gap-3 px-4 py-3 rounded-lg ${
+                    active ? "bg-stone-100 text-emerald-700" : "text-stone-700"
+                  }`}
+                >
+                  <span className="w-6 h-6 shrink-0">{icones[t.icone]}</span>
+                  <span className="text-base">{t.label}</span>
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Mobile : barre d'onglets fixe, à portée de pouce */}
       <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-slate-900 border-t border-slate-700 pb-[env(safe-area-inset-bottom)]">
         <div className="flex">
-          {tabs.map((t) => {
+          {principaux.map((t) => {
             const active = pathname === t.href;
             return (
               <Link
@@ -107,6 +157,16 @@ export function Shell({ children }) {
               </Link>
             );
           })}
+          <button
+            onClick={() => setPlusOuvert((v) => !v)}
+            aria-expanded={plusOuvert}
+            className={`flex-1 min-w-0 flex flex-col items-center gap-0.5 py-2 transition-colors ${
+              plusOuvert || secondaires.some((t) => t.href === pathname) ? "text-emerald-300" : "text-stone-400"
+            }`}
+          >
+            <span className="w-6 h-6">{icones.plus}</span>
+            <span className="text-[10px] leading-none">Plus</span>
+          </button>
         </div>
       </nav>
     </div>

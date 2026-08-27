@@ -88,6 +88,26 @@ function LotsInner() {
                 <input type="date" className="w-full border border-stone-300 rounded px-2 py-1" defaultValue={lot.fin_bail || ""}
                   onBlur={(e) => updateLot(lot.id, { fin_bail: e.target.value })} />
               </Field>
+              <Field label="Date de départ du locataire">
+                <input type="date" className="w-full border border-stone-300 rounded px-2 py-1" defaultValue={lot.date_depart || ""}
+                  onBlur={(e) => updateLot(lot.id, { date_depart: e.target.value || null })} />
+              </Field>
+              {lot.date_depart && (lot.depot_garantie || 0) > 0 && (
+                <>
+                  <Field label="Dépôt restitué le">
+                    <input type="date" className="w-full border border-stone-300 rounded px-2 py-1" defaultValue={lot.depot_restitue_le || ""}
+                      onBlur={(e) => updateLot(lot.id, { depot_restitue_le: e.target.value || null })} />
+                  </Field>
+                  <Field label="Montant restitué (€)">
+                    <input type="number" className="w-full border border-stone-300 rounded px-2 py-1" defaultValue={lot.depot_montant_restitue ?? ""}
+                      onBlur={(e) => updateLot(lot.id, { depot_montant_restitue: e.target.value === "" ? null : parseFloat(e.target.value) })} />
+                  </Field>
+                  <Field label="Retenues éventuelles (motif)">
+                    <input className="w-full border border-stone-300 rounded px-2 py-1" defaultValue={lot.depot_retenues_note || ""}
+                      onBlur={(e) => updateLot(lot.id, { depot_retenues_note: e.target.value })} />
+                  </Field>
+                </>
+              )}
               {lot.incomplet && lot.incomplet.length > 0 && (
                 <div className="md:col-span-2 bg-amber-50 border border-amber-200 rounded p-2 text-amber-800 text-xs">
                   {lot.incomplet.join(" · ")}

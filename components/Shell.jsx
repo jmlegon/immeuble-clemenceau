@@ -23,7 +23,7 @@ export function Shell({ children }) {
 
   return (
     <div className="min-h-screen bg-stone-100 text-stone-800">
-      <header className="bg-slate-900 text-stone-100 px-6 py-5">
+      <header className="bg-slate-900 text-stone-100 px-6 py-5 pt-[calc(1.25rem+env(safe-area-inset-top))]">
         <div className="max-w-5xl mx-auto flex items-center justify-between">
           <div>
             <p className="text-xs uppercase tracking-widest text-emerald-400 font-medium">Registre de gestion locative</p>
@@ -52,7 +52,7 @@ export function Shell({ children }) {
           })}
         </div>
       </nav>
-      <main className="max-w-5xl mx-auto px-6 py-6">{children}</main>
+      <main className="max-w-5xl mx-auto px-6 py-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))]">{children}</main>
     </div>
   );
 }

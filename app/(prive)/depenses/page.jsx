@@ -1,11 +1,15 @@
 "use client";
 import { useEffect, useState } from "react";
-import AuthGuard from "@/components/AuthGuard";
-import { Shell, Card, Field, Badge, DataTable } from "@/components/Shell";
+import { Card, Field, Badge, DataTable, Bandeau, DialogueSuppression, useRetour } from "@/components/Shell";
 import { supabase } from "@/lib/supabaseClient";
-import { eur, fdate, todayISO, CATEGORIES_DEPENSE, labelCategorie } from "@/lib/helpers";
+import { eur, fdate, todayISO, CATEGORIES_DEPENSE, labelCategorie, nettoyerNomFichier } from "@/lib/helpers";
 
 const BUCKET = "documents";
+
+// 15 Mo : au-delà, un envoi depuis un téléphone en 4G échoue plus souvent
+// qu'il n'aboutit, et un scan de bail n'a aucune raison d'être si lourd.
+const TAILLE_MAX = 15 * 1024 * 1024;
+
 
 function DepensesInner() {
   const [lots, setLots] = useState([]);
@@ -13,7 +17,10 @@ function DepensesInner() {
   const [chargement, setChargement] = useState(true);
   const [tableAbsente, setTableAbsente] = useState(false);
   const [enregistrement, setEnregistrement] = useState(false);
-  const [erreur, setErreur] = useState("");
+  const [aSupprimer, setASupprimer] = useState(null);
+  const [suppressionEnCours, setSuppressionEnCours] = useState(false);
+  const [filtreLot, setFiltreLot] = useState("");
+  const retour = useRetour();
 
   const [annee, setAnnee] = useState(String(new Date().getFullYear()));
   const [date, setDate] = useState(todayISO());
@@ -39,15 +46,19 @@ function DepensesInner() {
   useEffect(() => { charger(); }, []);
 
   async function ajouter() {
-    setErreur("");
-    if (!date || !montant) { setErreur("La date et le montant sont obligatoires."); return; }
+    if (!date || !montant) { retour.echec("La date et le montant sont obligatoires."); return; }
     setEnregistrement(true);
 
     let fichier_path = null;
     if (fichier) {
-      const path = `depenses/${Date.now()}-${fichier.name}`;
+      if (fichier.size > TAILLE_MAX) {
+        retour.echec(`Justificatif trop volumineux (${Math.round(fichier.size / 1048576)} Mo). Maximum 15 Mo.`);
+        setEnregistrement(false);
+        return;
+      }
+      const path = `depenses/${Date.now()}-${nettoyerNomFichier(fichier.name)}`;
       const { error } = await supabase.storage.from(BUCKET).upload(path, fichier);
-      if (error) { setErreur("Échec de l'envoi du justificatif : " + error.message); setEnregistrement(false); return; }
+      if (error) { retour.echec("Le justificatif n'a pas pu être envoyé", error); setEnregistrement(false); return; }
       fichier_path = path;
     }
 
@@ -62,24 +73,44 @@ function DepensesInner() {
       fichier_path,
     });
     setEnregistrement(false);
-    if (error) { setErreur("Enregistrement impossible : " + error.message); return; }
+    if (error) { retour.echec("La dépense n'a pas été enregistrée", error); return; }
 
+    retour.succes("Dépense enregistrée");
     setLibelle(""); setMontant(""); setTva(""); setFichier(null);
     charger();
   }
 
-  async function supprimer(id) {
-    await supabase.from("depenses").delete().eq("id", id);
+  async function confirmerSuppression() {
+    setSuppressionEnCours(true);
+    // Le justificatif part avec la dépense, sinon il reste orphelin dans le bucket.
+    if (aSupprimer.fichier_path) {
+      const { error } = await supabase.storage.from(BUCKET).remove([aSupprimer.fichier_path]);
+      if (error) {
+        retour.echec("Le justificatif n'a pas pu être supprimé — la dépense est conservée", error);
+        setSuppressionEnCours(false);
+        setASupprimer(null);
+        return;
+      }
+    }
+    const { error } = await supabase.from("depenses").delete().eq("id", aSupprimer.id);
+    setSuppressionEnCours(false);
+    if (error) {
+      retour.echec("La dépense n'a pas été supprimée", error);
+      setASupprimer(null);
+      return;
+    }
+    retour.succes("Dépense supprimée");
+    setASupprimer(null);
     charger();
   }
 
   async function voirFichier(path) {
     const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(path, 60);
-    if (error) { alert("Impossible d'ouvrir le justificatif : " + error.message); return; }
+    if (error) { retour.echec("Le justificatif n'a pas pu être ouvert", error); return; }
     window.open(data.signedUrl, "_blank");
   }
 
-  if (chargement) return <p className="text-stone-400">Chargement…</p>;
+  if (chargement) return <p className="text-stone-500">Chargement…</p>;
 
   if (tableAbsente) {
     return (
@@ -98,7 +129,8 @@ function DepensesInner() {
 
   const annees = [...new Set(depenses.map((d) => d.date.slice(0, 4)))].sort().reverse();
   if (annees.length && !annees.includes(annee)) annees.push(annee);
-  const filtrees = depenses.filter((d) => d.date.startsWith(annee));
+  const filtrees = depenses.filter((d) => d.date.startsWith(annee)
+    && (!filtreLot || (filtreLot === "commune" ? !d.lot_id : d.lot_id === filtreLot)));
 
   const total = filtrees.reduce((s, d) => s + (d.montant || 0), 0);
   const totalDeductible = filtrees.filter((d) => d.deductible).reduce((s, d) => s + (d.montant || 0), 0);
@@ -150,8 +182,6 @@ function DepensesInner() {
           </label>
         </div>
 
-        {erreur && <p className="text-sm text-red-600 mt-2">{erreur}</p>}
-
         <button onClick={ajouter} disabled={enregistrement}
           className="mt-3 w-full md:w-auto px-4 py-2.5 md:py-1.5 rounded bg-slate-900 text-white text-sm disabled:opacity-50">
           {enregistrement ? "Enregistrement…" : "Enregistrer la dépense"}
@@ -161,9 +191,18 @@ function DepensesInner() {
       <Card>
         <div className="flex items-center justify-between gap-3 mb-3">
           <h2 className="font-serif text-lg">Dépenses {annee}</h2>
-          <select className="border border-stone-300 rounded px-2 py-1 text-sm" value={annee} onChange={(e) => setAnnee(e.target.value)}>
-            {annees.map((a) => <option key={a} value={a}>{a}</option>)}
-          </select>
+          <div className="flex items-center gap-2">
+            <select className="border border-stone-300 rounded px-2 py-1 text-sm" value={filtreLot}
+              onChange={(e) => setFiltreLot(e.target.value)} aria-label="Filtrer par lot">
+              <option value="">Tous les lots</option>
+              <option value="commune">Immeuble (commune)</option>
+              {lots.map((l) => <option key={l.id} value={l.id}>{l.nom}</option>)}
+            </select>
+            <select className="border border-stone-300 rounded px-2 py-1 text-sm" value={annee}
+              onChange={(e) => setAnnee(e.target.value)} aria-label="Filtrer par année">
+              {annees.map((a) => <option key={a} value={a}>{a}</option>)}
+            </select>
+          </div>
         </div>
 
         <div className="grid grid-cols-3 gap-3 mb-4">
@@ -222,7 +261,7 @@ function DepensesInner() {
                     {d.fichier_path && (
                       <button onClick={() => voirFichier(d.fichier_path)} className="text-emerald-700 hover:underline p-1">justif.</button>
                     )}
-                    <button onClick={() => supprimer(d.id)} aria-label="Supprimer cette dépense" className="text-stone-400 hover:text-red-600 p-1">✕</button>
+                    <button onClick={() => setASupprimer(d)} aria-label="Supprimer cette dépense" className="text-stone-500 hover:text-red-600 p-1">✕</button>
                   </span>
                 ),
               },
@@ -230,14 +269,22 @@ function DepensesInner() {
           })}
         />
       </Card>
+
+      <DialogueSuppression
+        cible={aSupprimer}
+        titre="Supprimer cette dépense ?"
+        description={aSupprimer
+          ? `${aSupprimer.libelle || labelCategorie(aSupprimer.categorie)} — ${fdate(aSupprimer.date)}, ${eur(aSupprimer.montant)}.`
+          : ""}
+        enCours={suppressionEnCours}
+        onConfirmer={confirmerSuppression}
+        onAnnuler={() => setASupprimer(null)}
+      />
+      <Bandeau retour={retour} />
     </div>
   );
 }
 
 export default function Page() {
-  return (
-    <AuthGuard>
-      <Shell><DepensesInner /></Shell>
-    </AuthGuard>
-  );
+  return <DepensesInner />;
 }

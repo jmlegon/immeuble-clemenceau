@@ -23,3 +23,45 @@
     -webkit-tap-highlight-color: transparent;
   }
 }
+
+/* Impression d'une quittance ou d'une facture.
+   Le document doit sortir seul : ni bandeau, ni onglets, ni formulaires. On
+   masque tout, puis on ne réaffiche que le bloc marqué data-imprimable, sorti
+   du flux pour occuper la page. `visibility` plutôt que `display` : les
+   ancêtres du bloc restent en place, donc sa position ne dépend pas d'eux. */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  [data-imprimable],
+  [data-imprimable] * {
+    visibility: visible;
+  }
+  [data-imprimable] {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    padding: 0;
+    margin: 0;
+    border: 0;
+    background: #fff;
+    color: #000;
+    /* 12pt : plancher de lisibilité sur papier. */
+    font-size: 12pt;
+    line-height: 1.5;
+  }
+  [data-imprimable] pre {
+    white-space: pre-wrap;
+    background: none;
+    border: 0;
+    padding: 0;
+    font-size: 12pt;
+  }
+  [data-sans-impression] {
+    display: none !important;
+  }
+  @page {
+    margin: 18mm;
+  }
+}

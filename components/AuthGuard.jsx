@@ -27,7 +27,7 @@ export default function AuthGuard({ children }) {
 
   if (status !== "ok") {
     return (
-      <div className="min-h-[300px] flex items-center justify-center text-stone-400 font-serif">
+      <div className="min-h-[300px] flex items-center justify-center text-stone-500 font-serif">
         Vérification de la connexion…
       </div>
     );

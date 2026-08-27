@@ -1,7 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import AuthGuard from "@/components/AuthGuard";
-import { Shell, Card, Badge } from "@/components/Shell";
+import { Card, Badge } from "@/components/Shell";
 import { supabase } from "@/lib/supabaseClient";
 import { eur, fdate, fmois, prochaineOccurrence, joursRestants, moisEntre, moisCourant, moisManquants, ecartVersements, labelTypeDocument } from "@/lib/helpers";
 
@@ -25,7 +24,7 @@ function DashboardInner() {
     })();
   }, []);
 
-  if (chargement) return <p className="text-stone-400">Chargement…</p>;
+  if (chargement) return <p className="text-stone-500">Chargement…</p>;
 
   const lotsOccupes = lots.filter((l) => l.type !== "vacant");
   const totalMensuelHT = lotsOccupes.reduce((s, l) => s + (l.loyer_mensuel_ht || 0), 0);
@@ -44,12 +43,12 @@ function DashboardInner() {
       lot,
       mensuel: (lot.periodicite_facturation || "mensuelle") !== "trimestrielle",
       manquants: moisManquants(lot, ps, fenetre),
-      ecart: ecartVersements(ps, debutFenetre),
+      ...ecartVersements(ps, debutFenetre),
       dernier: ps.map((p) => p.periode).sort().slice(-1)[0] || null,
     };
   });
 
-  const enRetard = suivi.filter((s) => s.manquants.filter((mo) => mo !== courant).length > 0 || s.ecart > 0.01);
+  const enRetard = suivi.filter((s) => s.manquants.filter((mo) => mo !== courant).length > 0 || s.manque > 0.01);
 
   // ---- Fins de bail dans les 12 mois ----
   const finsBail = lotsOccupes
@@ -107,7 +106,7 @@ function DashboardInner() {
           <p className="text-sm text-emerald-700">Aucun retard détecté : tous les loyers attendus sont enregistrés.</p>
         ) : (
           <div className="space-y-3">
-            {enRetard.map(({ lot, manquants, ecart, dernier }) => {
+            {enRetard.map(({ lot, manquants, manque, avance, dernier }) => {
               const vraimentManquants = manquants.filter((mo) => mo !== courant);
               return (
                 <div key={lot.id} className="text-sm border-b border-stone-100 pb-3 last:border-0 last:pb-0">
@@ -123,10 +122,16 @@ function DashboardInner() {
                       Aucun paiement enregistré pour : {vraimentManquants.map(fmois).join(", ")}
                     </p>
                   )}
-                  {ecart > 0.01 && (
-                    <p className="text-stone-600 mt-1">Versements incomplets : {eur(ecart)} manquants au total.</p>
+                  {manque > 0.01 && (
+                    <p className="text-stone-600 mt-1">Versements incomplets : {eur(manque)} manquants au total.</p>
                   )}
-                  <p className="text-stone-400 text-xs mt-1">
+                  {avance > 0.01 && (
+                    <p className="text-stone-500 mt-1">
+                      Par ailleurs {eur(avance)} versés en trop sur d'autres mois — les deux ne se compensent pas
+                      d'eux-mêmes.
+                    </p>
+                  )}
+                  <p className="text-stone-500 text-xs mt-1">
                     Dernier encaissement enregistré : {dernier ? fmois(dernier) : "aucun"}
                   </p>
                 </div>
@@ -250,11 +255,5 @@ function DashboardInner() {
 }
 
 export default function Page() {
-  return (
-    <AuthGuard>
-      <Shell>
-        <DashboardInner />
-      </Shell>
-    </AuthGuard>
-  );
+  return <DashboardInner />;
 }

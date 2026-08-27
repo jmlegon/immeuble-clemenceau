@@ -57,7 +57,10 @@ async function listerFichiers(prefixe = "") {
 
 async function main() {
   await mkdir(dossier, { recursive: true });
-  const resume = { date: new Date().toISOString(), tables: {}, fichiers: 0, erreurs: [] };
+  // `fichiers` liste les correspondances chemin d'origine -> nom sur disque :
+  // la restauration s'appuie dessus plutôt que de deviner en sens inverse
+  // (un nom de fichier peut lui-même contenir un double souligné).
+  const resume = { date: new Date().toISOString(), tables: {}, fichiers: 0, correspondances: [], erreurs: [] };
 
   for (const table of TABLES) {
     const { data, error } = await sb.from(table).select("*");
@@ -79,8 +82,9 @@ async function main() {
       for (const chemin of fichiers) {
         const { data, error } = await sb.storage.from(BUCKET).download(chemin);
         if (error) { resume.erreurs.push(`fichier ${chemin} : ${error.message}`); continue; }
-        const dest = join(dossier, "fichiers", chemin.replace(/[/\\]/g, "__"));
-        await writeFile(dest, Buffer.from(await data.arrayBuffer()));
+        const nom = chemin.replace(/[/\\]/g, "__");
+        await writeFile(join(dossier, "fichiers", nom), Buffer.from(await data.arrayBuffer()));
+        resume.correspondances.push({ chemin, nom });
         resume.fichiers += 1;
       }
       console.log(`  ✓ ${resume.fichiers} fichier(s) du bucket « ${BUCKET} »`);

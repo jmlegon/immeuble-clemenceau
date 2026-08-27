@@ -2,12 +2,15 @@
   "name": "immeuble-clemenceau",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
-    "export": "node scripts/export-supabase.mjs"
+    "lint": "eslint .",
+    "export": "node scripts/export-supabase.mjs",
+    "import": "node scripts/import-supabase.mjs",
+    "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
@@ -16,7 +19,10 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@eslint/eslintrc": "^3.3.6",
     "autoprefixer": "^10.4.19",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^15.5.24",
     "postcss": "^8.4.40",
     "tailwindcss": "^3.4.7"
   }

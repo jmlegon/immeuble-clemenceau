@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { cloneElement, isValidElement, useCallback, useEffect, useId, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 const I = { fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinecap: "round", strokeLinejoin: "round" };
@@ -181,7 +181,7 @@ export function Shell({ children }) {
  * rows    : [{ key, cells: { [key]: ReactNode } }]
  */
 export function DataTable({ columns, rows, empty = "Aucune ligne pour l'instant." }) {
-  if (!rows.length) return <p className="text-sm text-stone-400">{empty}</p>;
+  if (!rows.length) return <p className="text-sm text-stone-500">{empty}</p>;
 
   const donnees = columns.filter((c) => !c.action);
   const actions = columns.filter((c) => c.action);
@@ -240,15 +240,149 @@ export function Badge({ children, tone = "gray" }) {
   return <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${tones[tone]}`}>{children}</span>;
 }
 
-export function Card({ children, className = "" }) {
-  return <div className={`bg-white rounded-lg border border-stone-200 p-4 ${className}`}>{children}</div>;
+// Les attributs supplémentaires sont transmis au <div> : c'est ce qui permet
+// de marquer une carte `data-imprimable` sans l'envelopper dans un conteneur.
+export function Card({ children, className = "", ...rest }) {
+  return <div className={`bg-white rounded-lg border border-stone-200 p-4 ${className}`} {...rest}>{children}</div>;
 }
 
+/**
+ * Libellé + champ, reliés par un identifiant.
+ *
+ * Le <label> était auparavant posé à côté du champ sans `htmlFor`, et aucun
+ * champ n'avait d'`id` : un lecteur d'écran annonçait « champ de saisie » sans
+ * dire lequel, et taper sur le libellé ne donnait pas le focus — une cible de
+ * 44 px perdue à chaque ligne de chaque formulaire, sur mobile.
+ *
+ * L'identifiant est engendré ici et posé sur l'enfant, pour que les quelque
+ * soixante appels existants n'aient rien à changer. Un `id` déjà présent sur
+ * l'enfant est respecté.
+ */
 export function Field({ label, children }) {
+  const genere = useId();
+  const id = isValidElement(children) && children.props.id ? children.props.id : genere;
   return (
     <div>
-      <label className="block text-xs text-stone-500 mb-1">{label}</label>
-      {children}
+      <label htmlFor={id} className="block text-xs text-stone-500 mb-1">{label}</label>
+      {isValidElement(children) ? cloneElement(children, { id }) : children}
+    </div>
+  );
+}
+
+/**
+ * Retour d'écriture partagé.
+ *
+ * Jusqu'ici, une écriture refusée par la base passait inaperçue : l'état local
+ * était déjà à jour à l'écran, et rien ne distinguait une saisie enregistrée
+ * d'une saisie perdue. `useRetour` porte cet état, `Bandeau` l'affiche.
+ *
+ *   const retour = useRetour();
+ *   const { error } = await supabase.from(...).update(...);
+ *   if (error) return retour.echec("Le loyer n'a pas été enregistré", error);
+ *   retour.succes();
+ *
+ * Un succès s'efface seul au bout de quelques secondes ; une erreur reste
+ * jusqu'à ce qu'on la ferme — on ne fait pas disparaître une mauvaise nouvelle.
+ */
+export function useRetour() {
+  const [etat, setEtat] = useState(null); // null | { type: "ok" | "erreur", message }
+  const minuterie = useRef(null);
+
+  useEffect(() => () => clearTimeout(minuterie.current), []);
+
+  const fermer = useCallback(() => {
+    clearTimeout(minuterie.current);
+    setEtat(null);
+  }, []);
+
+  const succes = useCallback((message = "Enregistré") => {
+    clearTimeout(minuterie.current);
+    setEtat({ type: "ok", message });
+    minuterie.current = setTimeout(() => setEtat(null), 2500);
+  }, []);
+
+  // Le détail technique de Supabase complète le message métier sans le remplacer :
+  // « Le relevé n'a pas été enregistré — new row violates row-level security policy ».
+  const echec = useCallback((message, erreur) => {
+    clearTimeout(minuterie.current);
+    const detail = erreur?.message ? ` — ${erreur.message}` : "";
+    setEtat({ type: "erreur", message: message + detail });
+  }, []);
+
+  return { etat, succes, echec, fermer };
+}
+
+export function Bandeau({ retour }) {
+  const etat = retour?.etat;
+  if (!etat) return null;
+  const ok = etat.type === "ok";
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="fixed left-0 right-0 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] md:bottom-6 z-40 px-4 md:px-6 pointer-events-none"
+    >
+      <div
+        className={`max-w-5xl mx-auto flex items-start gap-3 rounded-lg border px-4 py-3 shadow-lg pointer-events-auto ${
+          ok ? "bg-emerald-50 border-emerald-200 text-emerald-900" : "bg-red-50 border-red-200 text-red-900"
+        }`}
+      >
+        <span className="w-5 h-5 shrink-0 mt-px">
+          {ok ? (
+            <svg viewBox="0 0 24 24" {...I}><path d="M20 6L9 17l-5-5" /></svg>
+          ) : (
+            <svg viewBox="0 0 24 24" {...I}><circle cx="12" cy="12" r="9" /><path d="M12 7v6M12 16.5v.01" /></svg>
+          )}
+        </span>
+        <p className="text-sm flex-1 min-w-0 break-words">{etat.message}</p>
+        <button
+          onClick={retour.fermer}
+          aria-label="Fermer le message"
+          className={`shrink-0 -mr-1 -mt-0.5 p-1 ${ok ? "text-emerald-700" : "text-red-700"}`}
+        >
+          <svg viewBox="0 0 24 24" {...I} className="w-4 h-4"><path d="M18 6L6 18M6 6l12 12" /></svg>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Confirmation avant une suppression définitive.
+ *
+ * `cible` est l'objet à supprimer (null = fermé) : le même état porte à la fois
+ * l'ouverture de la fenêtre et ce sur quoi elle porte.
+ */
+export function DialogueSuppression({ cible, titre, description, onConfirmer, onAnnuler, enCours = false }) {
+  if (!cible) return null;
+  return (
+    <div className="fixed inset-0 z-[60] flex items-end md:items-center justify-center">
+      <button aria-label="Annuler" onClick={onAnnuler} className="absolute inset-0 bg-slate-900/50" />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={titre}
+        className="relative bg-white w-full md:max-w-sm rounded-t-2xl md:rounded-lg p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] md:pb-5 shadow-xl"
+      >
+        <h2 className="font-serif text-lg">{titre}</h2>
+        {description && <p className="text-sm text-stone-600 mt-2">{description}</p>}
+        <p className="text-sm text-stone-500 mt-2">Cette suppression est définitive.</p>
+        <div className="flex flex-col-reverse md:flex-row md:justify-end gap-2 mt-5">
+          <button
+            onClick={onAnnuler}
+            className="px-4 py-2.5 md:py-1.5 rounded border border-stone-300 text-stone-700 text-sm"
+          >
+            Annuler
+          </button>
+          <button
+            onClick={onConfirmer}
+            disabled={enCours}
+            className="px-4 py-2.5 md:py-1.5 rounded bg-red-600 text-white text-sm disabled:opacity-50"
+          >
+            {enCours ? "Suppression…" : "Supprimer"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

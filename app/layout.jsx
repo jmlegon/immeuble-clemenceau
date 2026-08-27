@@ -1,4 +1,5 @@
 import "./globals.css";
+import ServiceWorker from "@/components/ServiceWorker";
 
 export const metadata = {
   title: "Gestion locative — 1 bd Clémenceau, Binic",
@@ -28,7 +29,10 @@ export default function RootLayout({ children }) {
             à 16.4 ne reconnaissent que cette variante-ci pour le plein écran. */}
         <meta name="apple-mobile-web-app-capable" content="yes" />
       </head>
-      <body className="font-sans">{children}</body>
+      <body className="font-sans">
+        {children}
+        <ServiceWorker />
+      </body>
     </html>
   );
 }

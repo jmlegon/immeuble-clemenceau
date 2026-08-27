@@ -1,11 +1,8 @@
-"use client";
-import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { redirect } from "next/navigation";
 
+// Redirection côté serveur. Auparavant faite dans un useEffect, elle obligeait
+// le navigateur à charger puis exécuter le JavaScript avant de partir ailleurs :
+// lancée depuis l'icône iOS, l'application s'ouvrait sur un écran blanc.
 export default function Home() {
-  const router = useRouter();
-  useEffect(() => {
-    router.replace("/dashboard");
-  }, [router]);
-  return null;
+  redirect("/dashboard");
 }

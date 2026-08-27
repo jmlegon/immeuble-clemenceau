@@ -1,7 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import AuthGuard from "@/components/AuthGuard";
-import { Shell, Card, Badge, DataTable } from "@/components/Shell";
+import { Card, Badge, DataTable } from "@/components/Shell";
 import { supabase } from "@/lib/supabaseClient";
 import { eur, fdate, labelCategorie, telechargerCSV, nombreFR, tvaSurPaiement } from "@/lib/helpers";
 
@@ -35,7 +34,7 @@ function BilanInner() {
     })();
   }, []);
 
-  if (chargement) return <p className="text-stone-400">Chargement…</p>;
+  if (chargement) return <p className="text-stone-500">Chargement…</p>;
 
   if (tableAbsente) {
     return (
@@ -120,7 +119,7 @@ function BilanInner() {
     l.push(["PAR RÉGIME FISCAL"]);
     l.push(["Régime", "Recettes", "Charges", "Résultat"]);
     l.push(["Revenus fonciers (déclaration 2044)", nombreFR(foncier.encaisse), nombreFR(foncier.charges), nombreFR(foncier.resultat)]);
-    l.push(["BIC meublé (déclaration 2031)", nombreFR(bic.encaisse), nombreFR(bic.charges), nombreFR(bic.resultat)]);
+    l.push(["Location meublée (déclaration 2031)", nombreFR(bic.encaisse), nombreFR(bic.charges), "hors amortissement — non calculé"]);
     l.push([]);
     l.push(["TVA"]);
     l.push(["TVA collectée (estimée sur encaissements)", nombreFR(tvaCollectee)]);
@@ -212,9 +211,22 @@ function BilanInner() {
           ]}
           rows={[
             { key: "foncier", cells: { regime: "Revenus fonciers — déclaration 2044", recettes: eur(foncier.encaisse), charges: eur(foncier.charges), resultat: eur(foncier.resultat) } },
-            { key: "bic", cells: { regime: "BIC meublé — déclaration 2031", recettes: eur(bic.encaisse), charges: eur(bic.charges), resultat: eur(bic.resultat) } },
           ]}
         />
+        {bic.encaisse > 0 && (
+          <div className="mt-4 pt-3 border-t border-stone-100 text-sm">
+            <p className="text-stone-600">
+              <span className="font-medium">Location meublée — déclaration 2031 :</span> {eur(bic.encaisse)} encaissés
+              et {eur(bic.charges)} de charges décaissées sur l'année.
+            </p>
+            <p className="text-stone-500 mt-2">
+              Aucun résultat n'est affiché ici : au régime réel, l'amortissement du bien et du mobilier
+              constitue l'essentiel de ce qui réduit le résultat BIC, et cette application ne le calcule
+              pas. Un total qui l'ignorerait serait trompeur — les montants ci-dessus servent à alimenter
+              le calcul, pas à le remplacer.
+            </p>
+          </div>
+        )}
       </Card>
 
       <Card>
@@ -244,7 +256,8 @@ function BilanInner() {
         <p className="text-sm text-amber-900">
           Ces montants sont une aide à la préparation, pas un document comptable. Vérifiez-les avec
           votre comptable avant toute déclaration — en particulier la distinction entre travaux
-          d'entretien (déductibles immédiatement) et travaux d'amélioration.
+          d'entretien (déductibles immédiatement) et travaux d'amélioration, et le calcul des
+          amortissements de la location meublée, que cette application ne fait pas.
         </p>
       </Card>
     </div>
@@ -252,9 +265,5 @@ function BilanInner() {
 }
 
 export default function Page() {
-  return (
-    <AuthGuard>
-      <Shell><BilanInner /></Shell>
-    </AuthGuard>
-  );
+  return <BilanInner />;
 }

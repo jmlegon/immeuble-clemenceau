@@ -30,16 +30,18 @@ export default function Login() {
         <h1 className="text-xl font-serif mt-1 mb-6">1 bd Clémenceau, Binic</h1>
         <form onSubmit={connecter} className="space-y-4">
           <div>
-            <label className="block text-xs text-stone-500 mb-1">Email</label>
+            <label htmlFor="email" className="block text-xs text-stone-500 mb-1">Email</label>
             <input
-              type="email" required value={email} onChange={(e) => setEmail(e.target.value)}
+              id="email" type="email" required autoComplete="username"
+              value={email} onChange={(e) => setEmail(e.target.value)}
               className="w-full border border-stone-300 rounded px-3 py-2 text-sm"
             />
           </div>
           <div>
-            <label className="block text-xs text-stone-500 mb-1">Mot de passe</label>
+            <label htmlFor="password" className="block text-xs text-stone-500 mb-1">Mot de passe</label>
             <input
-              type="password" required value={password} onChange={(e) => setPassword(e.target.value)}
+              id="password" type="password" required autoComplete="current-password"
+              value={password} onChange={(e) => setPassword(e.target.value)}
               className="w-full border border-stone-300 rounded px-3 py-2 text-sm"
             />
           </div>
@@ -51,7 +53,7 @@ export default function Login() {
             {chargement ? "Connexion…" : "Se connecter"}
           </button>
         </form>
-        <p className="text-xs text-stone-400 mt-4">
+        <p className="text-xs text-stone-500 mt-4">
           Les comptes (vous et Baptiste) se créent depuis Supabase &gt; Authentication &gt; Users — il n'y a pas d'inscription publique ici.
         </p>
       </div>

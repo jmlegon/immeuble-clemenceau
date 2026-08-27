@@ -1,41 +1,44 @@
 "use client";
-import { useEffect, useState } from "react";
-import { Card, Field, Badge, DataTable, Bandeau, useRetour } from "@/components/Shell";
+import { useMemo, useState } from "react";
+import { Card, Field, Badge, DataTable, Bandeau, Squelette, Volet, useRetour, useStatutsChamps } from "@/components/Shell";
 import { supabase } from "@/lib/supabaseClient";
+import { rafraichir, useTable } from "@/lib/donnees";
 import { eur, fdate, todayISO, compteurLabels, consommationSurPeriode, regularisationEau, joursEntre, labelCategorie } from "@/lib/helpers";
 
+const TARIFS_DEFAUT = { prix_m3: 5.5, abonnement_annuel: 70, nombre_parts: 4 };
+
 function EauInner() {
-  const [lots, setLots] = useState([]);
-  const [releves, setReleves] = useState({});
-  const [tarifs, setTarifs] = useState({ prix_m3: 5.5, abonnement_annuel: 70, nombre_parts: 4 });
-  const [depensesTF, setDepensesTF] = useState([]);
   const [anneeTF, setAnneeTF] = useState(String(new Date().getFullYear()));
   const [compteur, setCompteur] = useState("vide1");
   const [date, setDate] = useState(todayISO());
   const [index, setIndex] = useState("");
-  const [chargement, setChargement] = useState(true);
   const [enregistrement, setEnregistrement] = useState(false);
   const retour = useRetour();
+  const champs = useStatutsChamps();
 
-  async function charger() {
-    const { data: lotsData } = await supabase.from("lots").select("*").neq("type", "vacant").order("id");
-    const { data: relevesData } = await supabase.from("releves_eau").select("*").order("date");
-    const { data: tarifsData } = await supabase.from("eau_tarifs").select("*").eq("id", 1).single();
-    // La taxe foncière est une dépense commune depuis la migration 01 : c'est
-    // là qu'on la lit, pour que l'écran et le bilan parlent du même montant.
-    const { data: tfData } = await supabase.from("depenses").select("*").eq("categorie", "taxe_fonciere");
-    setLots(lotsData || []);
-    const grouped = {};
-    (relevesData || []).forEach((r) => {
-      grouped[r.compteur_id] = grouped[r.compteur_id] || [];
-      grouped[r.compteur_id].push(r);
+  const { donnees: tousLots, chargement } = useTable("lots");
+  const { donnees: tousReleves } = useTable("releves_eau");
+  const tarifsBase = useTable("eau_tarifs").donnees[0] || null;
+  // La taxe foncière est une dépense commune depuis la migration 01 : c'est
+  // là qu'on la lit, pour que l'écran et le bilan parlent du même montant.
+  const { donnees: depenses } = useTable("depenses");
+
+  const lots = useMemo(() => tousLots.filter((l) => l.type !== "vacant"), [tousLots]);
+  const depensesTF = useMemo(() => depenses.filter((d) => d.categorie === "taxe_fonciere"), [depenses]);
+  const releves = useMemo(() => {
+    const parCompteur = {};
+    tousReleves.forEach((r) => {
+      parCompteur[r.compteur_id] = parCompteur[r.compteur_id] || [];
+      parCompteur[r.compteur_id].push(r);
     });
-    setReleves(grouped);
-    if (tarifsData) setTarifs(tarifsData);
-    setDepensesTF(tfData || []);
-    setChargement(false);
-  }
-  useEffect(() => { charger(); }, []);
+    return parCompteur;
+  }, [tousReleves]);
+
+  // Les tarifs s'éditent au clavier : la frappe en cours reste locale, la base
+  // n'est écrite qu'à la sortie du champ. Tant qu'on n'a rien tapé, c'est la
+  // valeur enregistrée qui s'affiche.
+  const [saisieTarifs, setSaisieTarifs] = useState(null);
+  const tarifs = saisieTarifs || tarifsBase || TARIFS_DEFAUT;
 
   function consommation(id) {
     const rel = releves[id] || [];
@@ -54,25 +57,30 @@ function EauInner() {
     if (error) { retour.echec("Le relevé n'a pas été enregistré", error); return; }
     retour.succes(`Relevé ajouté — ${compteurLabels[compteur]}`);
     setIndex("");
-    charger();
+    rafraichir("releves_eau");
   }
 
-  // Les tarifs et la taxe s'éditent au clavier : on ne garde en local que la
-  // frappe, et on n'écrit en base qu'à la sortie du champ. Avant, chaque
-  // caractère déclenchait sa propre écriture, sans que rien n'en vérifie l'issue.
-  function saisirTarifs(patch) { setTarifs((t) => ({ ...t, ...patch })); }
+  function saisirTarifs(patch) { setSaisieTarifs({ ...tarifs, ...patch }); }
 
-  async function enregistrerTarifs() {
+  async function enregistrerTarifs(colonne) {
     const { prix_m3, abonnement_annuel, nombre_parts } = tarifs;
+    champs.debut(colonne);
     const { error } = await supabase.from("eau_tarifs")
       .update({ prix_m3, abonnement_annuel, nombre_parts }).eq("id", 1);
-    if (error) { retour.echec("Les tarifs d'eau n'ont pas été enregistrés", error); charger(); return; }
-    retour.succes("Tarifs d'eau enregistrés");
+    if (error) {
+      champs.echec(colonne);
+      setSaisieTarifs(null);
+      retour.echec("Les tarifs d'eau n'ont pas été enregistrés", error);
+      return;
+    }
+    // Le succès se dit dans le champ ; le bandeau reste pour les erreurs.
+    champs.succes(colonne);
+    rafraichir("eau_tarifs");
   }
 
 
 
-  if (chargement) return <p className="text-stone-500">Chargement…</p>;
+  if (chargement) return <Squelette cartes={3} />;
 
   // Le contrôle d'écart n'a de sens qu'à période commune : additionner des
   // consommations mesurées sur des intervalles différents, puis les comparer au
@@ -103,8 +111,7 @@ function EauInner() {
 
   return (
     <div className="space-y-4">
-      <Card>
-        <h2 className="font-serif text-lg mb-3">Ajouter un relevé</h2>
+      <Volet titre="Ajouter un relevé">
         <div className="grid md:grid-cols-4 gap-3 items-end">
           <Field label="Compteur">
             <select className="w-full border border-stone-300 rounded px-2 py-1" value={compteur} onChange={(e) => setCompteur(e.target.value)}>
@@ -119,7 +126,7 @@ function EauInner() {
           </Field>
           <button onClick={ajouterReleve} disabled={enregistrement} className="w-full md:w-auto px-4 py-2.5 md:py-1.5 rounded bg-slate-900 text-white text-sm md:h-fit disabled:opacity-50">{enregistrement ? "Ajout…" : "Ajouter"}</button>
         </div>
-      </Card>
+      </Volet>
 
       <Card>
         <h2 className="font-serif text-lg mb-3">Relevés et consommations</h2>
@@ -169,17 +176,17 @@ function EauInner() {
       <Card>
         <h2 className="font-serif text-lg mb-3">Régularisation des charges d'eau</h2>
         <div className="flex flex-wrap gap-4">
-          <Field label="Prix du m³ (€)">
+          <Field label="Prix du m³ (€)" statut={champs.statuts.prix_m3}>
             <input type="number" step="0.01" className="w-32 border border-stone-300 rounded px-2 py-1" value={tarifs.prix_m3}
-              onChange={(e) => saisirTarifs({ prix_m3: parseFloat(e.target.value) || 0 })} onBlur={enregistrerTarifs} />
+              onChange={(e) => saisirTarifs({ prix_m3: parseFloat(e.target.value) || 0 })} onBlur={() => enregistrerTarifs("prix_m3")} />
           </Field>
-          <Field label="Abonnement annuel (€)">
+          <Field label="Abonnement annuel (€)" statut={champs.statuts.abonnement_annuel}>
             <input type="number" step="0.01" className="w-32 border border-stone-300 rounded px-2 py-1" value={tarifs.abonnement_annuel}
-              onChange={(e) => saisirTarifs({ abonnement_annuel: parseFloat(e.target.value) || 0 })} onBlur={enregistrerTarifs} />
+              onChange={(e) => saisirTarifs({ abonnement_annuel: parseFloat(e.target.value) || 0 })} onBlur={() => enregistrerTarifs("abonnement_annuel")} />
           </Field>
-          <Field label="Nombre de parts">
+          <Field label="Nombre de parts" statut={champs.statuts.nombre_parts}>
             <input type="number" className="w-32 border border-stone-300 rounded px-2 py-1" value={tarifs.nombre_parts}
-              onChange={(e) => saisirTarifs({ nombre_parts: parseFloat(e.target.value) || 1 })} onBlur={enregistrerTarifs} />
+              onChange={(e) => saisirTarifs({ nombre_parts: parseFloat(e.target.value) || 1 })} onBlur={() => enregistrerTarifs("nombre_parts")} />
           </Field>
         </div>
         <p className="text-xs text-stone-500 mt-3">

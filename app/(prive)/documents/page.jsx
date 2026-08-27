@@ -1,7 +1,9 @@
 "use client";
-import { useEffect, useState } from "react";
-import { Card, Field, DataTable, Bandeau, DialogueSuppression, useRetour } from "@/components/Shell";
+import { Suspense, useMemo, useState } from "react";
+import { Card, Field, DataTable, Bandeau, DialogueSuppression, Squelette, Volet, useRetour, useStatutsChamps } from "@/components/Shell";
 import { supabase } from "@/lib/supabaseClient";
+import { majTable, rafraichir, useTable } from "@/lib/donnees";
+import { useParamUrl } from "@/lib/etat-url";
 import { eur, fdate, todayISO, genererTexteFacture, genererTexteQuittance, TYPES_DOCUMENT, labelTypeDocument, ajouterMois, joursRestants, nettoyerNomFichier } from "@/lib/helpers";
 
 const BUCKET = "documents";
@@ -11,56 +13,66 @@ const BUCKET = "documents";
 const TAILLE_MAX = 15 * 1024 * 1024;
 
 
+const BAILLEUR_VIDE = { nom: "", adresse: "", siret: "", tva_intra: "" };
+
 function DocumentsInner() {
-  const [lots, setLots] = useState([]);
-  const [documents, setDocuments] = useState([]);
-  const [bailleur, setBailleur] = useState({ nom: "", adresse: "", siret: "", tva_intra: "" });
-  const [lotId, setLotId] = useState("");
   const [periode, setPeriode] = useState(todayISO().slice(0, 7));
   const [trimestriel, setTrimestriel] = useState(true);
   const [preview, setPreview] = useState(null);
-  const [uploadLotId, setUploadLotId] = useState("");
   const [fichier, setFichier] = useState(null);
   const [uploadType, setUploadType] = useState("bail");
   const [uploadTitre, setUploadTitre] = useState("");
   const [uploadEmission, setUploadEmission] = useState(todayISO());
   const [uploadExpiration, setUploadExpiration] = useState("");
-  const [chargement, setChargement] = useState(true);
   const [generation, setGeneration] = useState(false);
   const [envoi, setEnvoi] = useState(false);
-  const [filtreLot, setFiltreLot] = useState("");
-  const [filtreType, setFiltreType] = useState("");
+  // Filtres dans l'adresse : « diagnostic à renouveler » sur le tableau de bord
+  // amène ici sur le bon lot et le bon type, la ligne cherchée à l'écran.
+  const [filtreLot, setFiltreLot] = useParamUrl("lot");
+  const [filtreType, setFiltreType] = useParamUrl("type");
   const [aSupprimer, setASupprimer] = useState(null);
   const [suppressionEnCours, setSuppressionEnCours] = useState(false);
   const retour = useRetour();
+  const champs = useStatutsChamps();
 
-  async function charger() {
-    const { data: lotsData } = await supabase.from("lots").select("*").neq("type", "vacant").order("id");
-    const { data: docsData } = await supabase.from("documents").select("*").order("date_emission", { ascending: false });
-    const { data: bailleurData } = await supabase.from("bailleur").select("*").eq("id", 1).single();
-    setLots(lotsData || []);
-    setDocuments(docsData || []);
-    if (bailleurData) setBailleur(bailleurData);
-    if (lotsData && lotsData.length) { setLotId(lotsData[0].id); setUploadLotId(lotsData[0].id); }
-    setChargement(false);
-  }
-  useEffect(() => { charger(); }, []);
+  const { donnees: tousLots, chargement } = useTable("lots");
+  const { donnees: documents } = useTable("documents");
+  const bailleur = useTable("bailleur").donnees[0] || BAILLEUR_VIDE;
+  // On n'émet ni quittance ni bail pour un lot vacant.
+  const lots = useMemo(() => tousLots.filter((l) => l.type !== "vacant"), [tousLots]);
+
+  // Tant qu'on n'a pas choisi dans la liste, c'est le lot de l'adresse —
+  // celui d'où l'on vient — plutôt que le premier de la liste : « Générer une
+  // quittance » depuis une fiche vise ce lot-là.
+  const [lotSaisi, setLotSaisi] = useState(null);
+  const [uploadLotSaisi, setUploadLotSaisi] = useState(null);
+  const lotVise = lots.some((l) => l.id === filtreLot) ? filtreLot : lots[0]?.id || "";
+  const lotId = lotSaisi !== null ? lotSaisi : lotVise;
+  const uploadLotId = uploadLotSaisi !== null ? uploadLotSaisi : lotVise;
 
   const lot = lots.find((l) => l.id === lotId);
   const typesPresents = [...new Set(documents.map((d) => d.type).filter(Boolean))].sort();
+  // Une valeur d'adresse absente des listes déroulantes est ignorée : sinon
+  // l'historique se vide pendant que le filtre affiche « Tous les types ».
+  const filtreLotActif = lots.some((l) => l.id === filtreLot) ? filtreLot : "";
+  const filtreTypeActif = typesPresents.includes(filtreType) ? filtreType : "";
   const documentsFiltres = documents.filter((d) =>
-    (!filtreLot || d.lot_id === filtreLot) && (!filtreType || d.type === filtreType));
+    (!filtreLotActif || d.lot_id === filtreLotActif) && (!filtreTypeActif || d.type === filtreTypeActif));
 
   async function majBailleur(patch, libelle) {
+    const colonne = Object.keys(patch)[0];
     const avant = bailleur;
-    setBailleur((b) => ({ ...b, ...patch }));
+    champs.debut(colonne);
+    majTable("bailleur", (liste) => liste.map((b) => ({ ...b, ...patch })));
     const { error } = await supabase.from("bailleur").update(patch).eq("id", 1);
     if (error) {
-      setBailleur(avant);
+      majTable("bailleur", () => [avant]);
+      champs.echec(colonne);
       retour.echec(`${libelle} : modification non enregistrée`, error);
       return;
     }
-    retour.succes(`${libelle} enregistré`);
+    // Le succès se dit dans le champ ; le bandeau reste pour les erreurs.
+    champs.succes(colonne);
   }
 
   async function generer() {
@@ -101,7 +113,7 @@ function DocumentsInner() {
 
     retour.succes(`${type === "facture" ? "Facture" : "Quittance"} ${numero} générée`);
     setPreview(texte);
-    charger();
+    rafraichir("documents");
   }
 
   // La date d'expiration se déduit du type : 10 ans pour un DPE, 6 ans pour
@@ -152,7 +164,7 @@ function DocumentsInner() {
     retour.succes("Document archivé");
     setFichier(null);
     setUploadTitre("");
-    charger();
+    rafraichir("documents");
   }
 
   async function confirmerSuppression() {
@@ -173,7 +185,7 @@ function DocumentsInner() {
     if (error) { retour.echec("Le document n'a pas été supprimé", error); setASupprimer(null); return; }
     retour.succes("Document supprimé");
     setASupprimer(null);
-    charger();
+    rafraichir("documents");
   }
 
   async function voirFichier(path) {
@@ -182,7 +194,7 @@ function DocumentsInner() {
     window.open(data.signedUrl, "_blank");
   }
 
-  if (chargement) return <p className="text-stone-500">Chargement…</p>;
+  if (chargement) return <Squelette cartes={3} />;
 
   return (
     <div className="space-y-4">
@@ -192,21 +204,19 @@ function DocumentsInner() {
         </p>
       </Card>
 
-      <Card>
-        <h2 className="font-serif text-lg mb-3">Coordonnées du bailleur</h2>
+      <Volet titre="Coordonnées du bailleur">
         <div className="grid md:grid-cols-2 gap-3">
-          <Field label="Nom / raison sociale"><input className="w-full border border-stone-300 rounded px-2 py-1" defaultValue={bailleur.nom} onBlur={(e) => majBailleur({ nom: e.target.value }, "Nom du bailleur")} /></Field>
-          <Field label="Adresse"><input className="w-full border border-stone-300 rounded px-2 py-1" defaultValue={bailleur.adresse} onBlur={(e) => majBailleur({ adresse: e.target.value }, "Adresse")} /></Field>
-          <Field label="SIRET"><input className="w-full border border-stone-300 rounded px-2 py-1" defaultValue={bailleur.siret} onBlur={(e) => majBailleur({ siret: e.target.value }, "SIRET")} /></Field>
-          <Field label="N° TVA intracommunautaire"><input className="w-full border border-stone-300 rounded px-2 py-1" defaultValue={bailleur.tva_intra} onBlur={(e) => majBailleur({ tva_intra: e.target.value }, "N° de TVA")} /></Field>
+          <Field label="Nom / raison sociale" statut={champs.statuts.nom}><input className="w-full border border-stone-300 rounded px-2 py-1" defaultValue={bailleur.nom} onBlur={(e) => majBailleur({ nom: e.target.value }, "Nom du bailleur")} /></Field>
+          <Field label="Adresse" statut={champs.statuts.adresse}><input className="w-full border border-stone-300 rounded px-2 py-1" defaultValue={bailleur.adresse} onBlur={(e) => majBailleur({ adresse: e.target.value }, "Adresse")} /></Field>
+          <Field label="SIRET" statut={champs.statuts.siret}><input className="w-full border border-stone-300 rounded px-2 py-1" defaultValue={bailleur.siret} onBlur={(e) => majBailleur({ siret: e.target.value }, "SIRET")} /></Field>
+          <Field label="N° TVA intracommunautaire" statut={champs.statuts.tva_intra}><input className="w-full border border-stone-300 rounded px-2 py-1" defaultValue={bailleur.tva_intra} onBlur={(e) => majBailleur({ tva_intra: e.target.value }, "N° de TVA")} /></Field>
         </div>
-      </Card>
+      </Volet>
 
-      <Card>
-        <h2 className="font-serif text-lg mb-3">Générer un document</h2>
+      <Volet titre="Générer une quittance ou une facture" defautOuvert>
         <div className="grid md:grid-cols-3 gap-3 items-end">
           <Field label="Lot">
-            <select className="w-full border border-stone-300 rounded px-2 py-1" value={lotId} onChange={(e) => setLotId(e.target.value)}>
+            <select className="w-full border border-stone-300 rounded px-2 py-1" value={lotId} onChange={(e) => setLotSaisi(e.target.value)}>
               {lots.map((l) => <option key={l.id} value={l.id}>{l.nom}</option>)}
             </select>
           </Field>
@@ -221,7 +231,7 @@ function DocumentsInner() {
             Facturation trimestrielle
           </label>
         )}
-      </Card>
+      </Volet>
 
       {preview && (
         <Card data-imprimable>
@@ -246,8 +256,7 @@ function DocumentsInner() {
         </Card>
       )}
 
-      <Card>
-        <h2 className="font-serif text-lg mb-3">Archiver un document</h2>
+      <Volet titre="Archiver un document">
         <div className="grid md:grid-cols-3 gap-3">
           <Field label="Type de document">
             <select className="w-full border border-stone-300 rounded px-2 py-1" value={uploadType} onChange={(e) => changerType(e.target.value)}>
@@ -255,7 +264,7 @@ function DocumentsInner() {
             </select>
           </Field>
           <Field label="Lot concerné">
-            <select className="w-full border border-stone-300 rounded px-2 py-1" value={uploadLotId} onChange={(e) => setUploadLotId(e.target.value)}>
+            <select className="w-full border border-stone-300 rounded px-2 py-1" value={uploadLotId} onChange={(e) => setUploadLotSaisi(e.target.value)}>
               {lots.map((l) => <option key={l.id} value={l.id}>{l.nom}</option>)}
             </select>
           </Field>
@@ -279,18 +288,18 @@ function DocumentsInner() {
           {envoi ? "Envoi…" : "Envoyer"}
         </button>
         <p className="text-xs text-stone-500 mt-2">Stocké dans le bucket privé Supabase Storage « {BUCKET} », accessible uniquement aux comptes autorisés.</p>
-      </Card>
+      </Volet>
 
       <Card>
         <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
           <h2 className="font-serif text-lg">Historique</h2>
-          <div className="flex items-center gap-2">
-            <select className="border border-stone-300 rounded px-2 py-1 text-sm" value={filtreLot}
+          <div className="flex items-center gap-2 w-full md:w-auto">
+            <select className="flex-1 min-w-0 md:flex-none border border-stone-300 rounded px-2 py-1 text-sm" value={filtreLotActif}
               onChange={(e) => setFiltreLot(e.target.value)} aria-label="Filtrer par lot">
               <option value="">Tous les lots</option>
               {lots.map((l) => <option key={l.id} value={l.id}>{l.nom}</option>)}
             </select>
-            <select className="border border-stone-300 rounded px-2 py-1 text-sm" value={filtreType}
+            <select className="flex-1 min-w-0 md:flex-none border border-stone-300 rounded px-2 py-1 text-sm" value={filtreTypeActif}
               onChange={(e) => setFiltreType(e.target.value)} aria-label="Filtrer par type">
               <option value="">Tous les types</option>
               {typesPresents.map((t) => <option key={t} value={t}>{labelTypeDocument(t)}</option>)}
@@ -351,5 +360,11 @@ function DocumentsInner() {
 }
 
 export default function Page() {
-  return <DocumentsInner />;
+  // useSearchParams lit l'adresse au moment du rendu : Next exige une frontière
+  // de suspension autour du composant qui s'en sert.
+  return (
+    <Suspense fallback={<p className="text-stone-500">Chargement…</p>}>
+      <DocumentsInner />
+    </Suspense>
+  );
 }

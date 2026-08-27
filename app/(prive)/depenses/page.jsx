@@ -1,8 +1,10 @@
 "use client";
-import { useEffect, useState } from "react";
-import { Card, Field, Badge, DataTable, Bandeau, DialogueSuppression, useRetour } from "@/components/Shell";
+import { Suspense, useState } from "react";
+import { Card, Field, Badge, DataTable, Bandeau, DialogueSuppression, Squelette, Volet, useRetour } from "@/components/Shell";
 import { supabase } from "@/lib/supabaseClient";
-import { eur, fdate, todayISO, CATEGORIES_DEPENSE, labelCategorie, nettoyerNomFichier } from "@/lib/helpers";
+import { rafraichir, useTable } from "@/lib/donnees";
+import { useParamUrl } from "@/lib/etat-url";
+import { eur, fdate, todayISO, CATEGORIES_DEPENSE, labelCategorie, nettoyerNomFichier, tableManquante } from "@/lib/helpers";
 
 const BUCKET = "documents";
 
@@ -12,38 +14,32 @@ const TAILLE_MAX = 15 * 1024 * 1024;
 
 
 function DepensesInner() {
-  const [lots, setLots] = useState([]);
-  const [depenses, setDepenses] = useState([]);
-  const [chargement, setChargement] = useState(true);
-  const [tableAbsente, setTableAbsente] = useState(false);
   const [enregistrement, setEnregistrement] = useState(false);
   const [aSupprimer, setASupprimer] = useState(null);
   const [suppressionEnCours, setSuppressionEnCours] = useState(false);
-  const [filtreLot, setFiltreLot] = useState("");
+  // Année et lot consultés sont dans l'adresse : le retour arrière ramène la
+  // même vue, et un lien peut désigner une année précise.
+  const [filtreLot, setFiltreLot] = useParamUrl("lot");
+  const [annee, setAnnee] = useParamUrl("annee", String(new Date().getFullYear()));
   const retour = useRetour();
 
-  const [annee, setAnnee] = useState(String(new Date().getFullYear()));
+  const { donnees: lots, chargement } = useTable("lots");
+  const { donnees: depenses, erreur } = useTable("depenses");
+  // La table n'existe pas tant que la migration 01 n'a pas été passée.
+  const tableAbsente = tableManquante(erreur);
+
   const [date, setDate] = useState(todayISO());
   const [categorie, setCategorie] = useState(CATEGORIES_DEPENSE[0].cle);
-  const [lotId, setLotId] = useState("");
+  // Tant qu'on n'a pas touché à la liste, le lot de l'adresse s'applique :
+  // « Ajouter une dépense » depuis une fiche arrive sur ce lot, pas sur
+  // « commune ». Ensuite, c'est le choix fait à l'écran qui prime.
+  const [lotSaisi, setLotSaisi] = useState(null);
+  const lotId = lotSaisi !== null ? lotSaisi : (lots.some((l) => l.id === filtreLot) ? filtreLot : "");
   const [libelle, setLibelle] = useState("");
   const [montant, setMontant] = useState("");
   const [tva, setTva] = useState("");
   const [deductible, setDeductible] = useState(true);
   const [fichier, setFichier] = useState(null);
-
-  async function charger() {
-    const [{ data: lotsData }, { data: depData, error: depErr }] = await Promise.all([
-      supabase.from("lots").select("*").order("id"),
-      supabase.from("depenses").select("*").order("date", { ascending: false }),
-    ]);
-    // La table n'existe pas tant que la migration 01 n'a pas été passée.
-    if (depErr && /relation|does not exist|schema cache/i.test(depErr.message)) setTableAbsente(true);
-    setLots(lotsData || []);
-    setDepenses(depData || []);
-    setChargement(false);
-  }
-  useEffect(() => { charger(); }, []);
 
   async function ajouter() {
     if (!date || !montant) { retour.echec("La date et le montant sont obligatoires."); return; }
@@ -77,7 +73,7 @@ function DepensesInner() {
 
     retour.succes("Dépense enregistrée");
     setLibelle(""); setMontant(""); setTva(""); setFichier(null);
-    charger();
+    rafraichir("depenses");
   }
 
   async function confirmerSuppression() {
@@ -101,7 +97,7 @@ function DepensesInner() {
     }
     retour.succes("Dépense supprimée");
     setASupprimer(null);
-    charger();
+    rafraichir("depenses");
   }
 
   async function voirFichier(path) {
@@ -110,7 +106,7 @@ function DepensesInner() {
     window.open(data.signedUrl, "_blank");
   }
 
-  if (chargement) return <p className="text-stone-500">Chargement…</p>;
+  if (chargement) return <Squelette cartes={2} />;
 
   if (tableAbsente) {
     return (
@@ -129,8 +125,11 @@ function DepensesInner() {
 
   const annees = [...new Set(depenses.map((d) => d.date.slice(0, 4)))].sort().reverse();
   if (annees.length && !annees.includes(annee)) annees.push(annee);
+  // Une valeur d'adresse absente de la liste déroulante est ignorée : sinon le
+  // tableau se vide pendant que le filtre affiche « Tous les lots ».
+  const filtreLotActif = filtreLot === "commune" || lots.some((l) => l.id === filtreLot) ? filtreLot : "";
   const filtrees = depenses.filter((d) => d.date.startsWith(annee)
-    && (!filtreLot || (filtreLot === "commune" ? !d.lot_id : d.lot_id === filtreLot)));
+    && (!filtreLotActif || (filtreLotActif === "commune" ? !d.lot_id : d.lot_id === filtreLotActif)));
 
   const total = filtrees.reduce((s, d) => s + (d.montant || 0), 0);
   const totalDeductible = filtrees.filter((d) => d.deductible).reduce((s, d) => s + (d.montant || 0), 0);
@@ -143,8 +142,7 @@ function DepensesInner() {
 
   return (
     <div className="space-y-4">
-      <Card>
-        <h2 className="font-serif text-lg mb-3">Enregistrer une dépense</h2>
+      <Volet titre="Enregistrer une dépense">
         <div className="grid md:grid-cols-3 gap-3">
           <Field label="Date">
             <input type="date" className="w-full border border-stone-300 rounded px-2 py-1" value={date} onChange={(e) => setDate(e.target.value)} />
@@ -155,7 +153,7 @@ function DepensesInner() {
             </select>
           </Field>
           <Field label="Lot concerné">
-            <select className="w-full border border-stone-300 rounded px-2 py-1" value={lotId} onChange={(e) => setLotId(e.target.value)}>
+            <select className="w-full border border-stone-300 rounded px-2 py-1" value={lotId} onChange={(e) => setLotSaisi(e.target.value)}>
               <option value="">Commune à l'immeuble</option>
               {lots.map((l) => <option key={l.id} value={l.id}>{l.nom}</option>)}
             </select>
@@ -186,19 +184,19 @@ function DepensesInner() {
           className="mt-3 w-full md:w-auto px-4 py-2.5 md:py-1.5 rounded bg-slate-900 text-white text-sm disabled:opacity-50">
           {enregistrement ? "Enregistrement…" : "Enregistrer la dépense"}
         </button>
-      </Card>
+      </Volet>
 
       <Card>
         <div className="flex items-center justify-between gap-3 mb-3">
           <h2 className="font-serif text-lg">Dépenses {annee}</h2>
-          <div className="flex items-center gap-2">
-            <select className="border border-stone-300 rounded px-2 py-1 text-sm" value={filtreLot}
+          <div className="flex items-center gap-2 w-full md:w-auto">
+            <select className="flex-1 min-w-0 md:flex-none border border-stone-300 rounded px-2 py-1 text-sm" value={filtreLotActif}
               onChange={(e) => setFiltreLot(e.target.value)} aria-label="Filtrer par lot">
               <option value="">Tous les lots</option>
               <option value="commune">Immeuble (commune)</option>
               {lots.map((l) => <option key={l.id} value={l.id}>{l.nom}</option>)}
             </select>
-            <select className="border border-stone-300 rounded px-2 py-1 text-sm" value={annee}
+            <select className="flex-1 min-w-0 md:flex-none border border-stone-300 rounded px-2 py-1 text-sm" value={annee}
               onChange={(e) => setAnnee(e.target.value)} aria-label="Filtrer par année">
               {annees.map((a) => <option key={a} value={a}>{a}</option>)}
             </select>
@@ -286,5 +284,11 @@ function DepensesInner() {
 }
 
 export default function Page() {
-  return <DepensesInner />;
+  // useSearchParams lit l'adresse au moment du rendu : Next exige une frontière
+  // de suspension autour du composant qui s'en sert.
+  return (
+    <Suspense fallback={<p className="text-stone-500">Chargement…</p>}>
+      <DepensesInner />
+    </Suspense>
+  );
 }

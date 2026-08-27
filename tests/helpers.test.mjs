@@ -103,6 +103,13 @@ describe("moisManquants", () => {
     assert.deepEqual(moisManquants({}, [], fenetre), fenetre);
   });
 
+  test("s'arrête au mois du départ du locataire", () => {
+    // Au-delà du départ, plus aucun loyer n'est dû : le tableau de bord
+    // proposerait sinon d'encaisser des mois qui n'existent pas.
+    const lot = { debut_bail: "2025-01-01", date_depart: "2026-02-14" };
+    assert.deepEqual(moisManquants(lot, [], fenetre), ["2026-01", "2026-02"]);
+  });
+
   test("laisse de côté les lots facturés au trimestre", () => {
     // Sans connaître le mois de départ du trimestre, un contrôle mensuel
     // produirait de fausses alertes sur les deux baux commerciaux.

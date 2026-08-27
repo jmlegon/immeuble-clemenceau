@@ -1,8 +1,9 @@
 "use client";
-import { useEffect, useState } from "react";
-import { Card, Badge, DataTable } from "@/components/Shell";
-import { supabase } from "@/lib/supabaseClient";
-import { eur, fdate, labelCategorie, telechargerCSV, nombreFR, tvaSurPaiement } from "@/lib/helpers";
+import { Suspense } from "react";
+import { Card, Badge, DataTable, Squelette } from "@/components/Shell";
+import { useTable } from "@/lib/donnees";
+import { useParamUrl } from "@/lib/etat-url";
+import { eur, fdate, labelCategorie, telechargerCSV, nombreFR, tvaSurPaiement, tableManquante } from "@/lib/helpers";
 
 // Location nue (habitation ou commerciale) => revenus fonciers.
 // Location meublée => BIC. C'est ce qui sépare les deux déclarations.
@@ -11,30 +12,16 @@ function regime(lot) {
 }
 
 function BilanInner() {
-  const [lots, setLots] = useState([]);
-  const [paiements, setPaiements] = useState([]);
-  const [depenses, setDepenses] = useState([]);
-  const [chargement, setChargement] = useState(true);
-  const [tableAbsente, setTableAbsente] = useState(false);
-  const [annee, setAnnee] = useState(String(new Date().getFullYear()));
+  const { donnees: lots, chargement } = useTable("lots");
+  const { donnees: paiements } = useTable("paiements");
+  const { donnees: depenses, erreur } = useTable("depenses");
+  // La table n'existe pas tant que la migration 01 n'a pas été passée.
+  const tableAbsente = tableManquante(erreur);
+  // L'année consultée est dans l'adresse : un bilan précis se met en favori et
+  // se retrouve par le retour arrière.
+  const [annee, setAnnee] = useParamUrl("annee", String(new Date().getFullYear()));
 
-  useEffect(() => {
-    (async () => {
-      const [{ data: l }, { data: p }, { data: d, error: dErr }] = await Promise.all([
-        supabase.from("lots").select("*").order("id"),
-        supabase.from("paiements").select("*"),
-        supabase.from("depenses").select("*"),
-      ]);
-      // La table n'existe pas tant que la migration 01 n'a pas été passée.
-      if (dErr && /relation|does not exist|schema cache/i.test(dErr.message)) setTableAbsente(true);
-      setLots(l || []);
-      setPaiements(p || []);
-      setDepenses(d || []);
-      setChargement(false);
-    })();
-  }, []);
-
-  if (chargement) return <p className="text-stone-500">Chargement…</p>;
+  if (chargement) return <Squelette cartes={3} />;
 
   if (tableAbsente) {
     return (
@@ -265,5 +252,11 @@ function BilanInner() {
 }
 
 export default function Page() {
-  return <BilanInner />;
+  // useSearchParams lit l'adresse au moment du rendu : Next exige une frontière
+  // de suspension autour du composant qui s'en sert.
+  return (
+    <Suspense fallback={<p className="text-stone-500">Chargement…</p>}>
+      <BilanInner />
+    </Suspense>
+  );
 }

@@ -1,40 +1,46 @@
 "use client";
-import { useEffect, useState } from "react";
-import { Card, Field, Badge, DataTable, Bandeau, DialogueSuppression, useRetour } from "@/components/Shell";
+import { Suspense, useMemo, useState } from "react";
+import { Card, Field, Badge, DataTable, Bandeau, DialogueSuppression, Squelette, Volet, useRetour } from "@/components/Shell";
 import { supabase } from "@/lib/supabaseClient";
-import { eur, fmois, todayISO, montantAttendu, loyerALaPeriode } from "@/lib/helpers";
+import { rafraichir, useTable } from "@/lib/donnees";
+import { useMajParams, useParamUrl } from "@/lib/etat-url";
+import { eur, fmois, todayISO, moisCourant, montantAttendu, loyerALaPeriode } from "@/lib/helpers";
 
 function PaiementsInner() {
-  const [lots, setLots] = useState([]);
-  const [paiements, setPaiements] = useState([]);
-  const [indexations, setIndexations] = useState([]);
-  const [lotId, setLotId] = useState("");
-  const [periode, setPeriode] = useState(todayISO().slice(0, 7));
   const [montant, setMontant] = useState("");
   const [datePaiement, setDatePaiement] = useState(todayISO());
   const [note, setNote] = useState("");
-  const [filtreLot, setFiltreLot] = useState("");
-  const [filtreAnnee, setFiltreAnnee] = useState("");
-  const [chargement, setChargement] = useState(true);
+  // Lot et période viennent de l'adresse : « Montant différent… » depuis le
+  // tableau de bord arrive ici sur le bon lot et le bon mois, sans les
+  // resélectionner. Les filtres de l'historique en font autant, et survivent
+  // donc au retour arrière.
+  const [lotUrl, setLotUrl] = useParamUrl("lot");
+  const [periodeUrl] = useParamUrl("periode");
+  const [periode, setPeriode] = useParamUrl("periode", moisCourant());
+  const [filtreLot, setFiltreLot] = useParamUrl("filtre_lot");
+  const [filtreAnnee, setFiltreAnnee] = useParamUrl("annee");
+  const majParams = useMajParams();
   const [enregistrement, setEnregistrement] = useState(false);
   const [aSupprimer, setASupprimer] = useState(null);
   const [suppressionEnCours, setSuppressionEnCours] = useState(false);
   const retour = useRetour();
 
-  async function charger() {
-    const { data: lotsData } = await supabase.from("lots").select("*").neq("type", "vacant").order("id");
-    const { data: paiementsData } = await supabase.from("paiements").select("*").order("periode", { ascending: false });
-    // Sert à retrouver le loyer en vigueur à la période saisie. Si la migration 02
-    // n'est pas passée, la liste reste vide et c'est le loyer courant qui s'applique.
-    const { data: indexData } = await supabase.from("indexations").select("*");
-    setLots(lotsData || []);
-    setPaiements(paiementsData || []);
-    setIndexations(indexData || []);
-    if (lotsData && lotsData.length && !lotId) setLotId(lotsData[0].id);
-    setChargement(false);
-  }
-  useEffect(() => { charger(); }, []);
+  const { donnees: tousLots, chargement } = useTable("lots");
+  const { donnees: paiements } = useTable("paiements");
+  // Sert à retrouver le loyer en vigueur à la période saisie. Si la migration 02
+  // n'est pas passée, la liste reste vide et c'est le loyer courant qui s'applique.
+  const { donnees: indexations } = useTable("indexations");
+  // On ne saisit pas de loyer sur un lot vacant : la liste s'arrête aux occupés.
+  const lots = useMemo(() => tousLots.filter((l) => l.type !== "vacant"), [tousLots]);
 
+  // Sans lot dans l'adresse, le premier de la liste — comme avant. Un
+  // identifiant inconnu (adresse tapée à la main, lot supprimé depuis) est
+  // ignoré : la liste déroulante afficherait le premier lot pendant que le
+  // formulaire en viserait un autre, et l'enregistrement partirait à côté.
+  // Arrivé par « Montant différent… », on vient pour saisir : le volet s'ouvre.
+  const ouvertParLien = !!periodeUrl;
+  const lotConnu = lots.some((l) => l.id === lotUrl);
+  const lotId = lotConnu ? lotUrl : lots[0]?.id || "";
   const lot = lots.find((l) => l.id === lotId);
   const indexationsDuLot = indexations.filter((x) => x.lot_id === lotId);
   // Le loyer d'alors, pas celui d'aujourd'hui : sans quoi un règlement saisi
@@ -59,7 +65,7 @@ function PaiementsInner() {
     retour.succes(`Paiement de ${fmois(periode)} enregistré`);
     setMontant("");
     setNote("");
-    charger();
+    rafraichir("paiements");
   }
 
   async function confirmerSuppression() {
@@ -73,23 +79,27 @@ function PaiementsInner() {
     }
     retour.succes("Paiement supprimé");
     setASupprimer(null);
-    charger();
+    rafraichir("paiements");
   }
 
-  if (chargement) return <p className="text-stone-500">Chargement…</p>;
+  if (chargement) return <Squelette cartes={2} />;
 
   const lotSupprime = aSupprimer ? lots.find((l) => l.id === aSupprimer.lot_id) : null;
   const anneesPaiements = [...new Set(paiements.map((p) => (p.periode || "").slice(0, 4)).filter(Boolean))].sort().reverse();
+  // Même prudence pour les filtres : une valeur absente des listes déroulantes
+  // viderait l'historique en affichant « Tous les lots ».
+  const filtreLotActif = lots.some((l) => l.id === filtreLot) ? filtreLot : "";
+  const filtreAnneeActif = anneesPaiements.includes(filtreAnnee) ? filtreAnnee : "";
   const paiementsFiltres = paiements.filter((p) =>
-    (!filtreLot || p.lot_id === filtreLot) && (!filtreAnnee || (p.periode || "").startsWith(filtreAnnee)));
+    (!filtreLotActif || p.lot_id === filtreLotActif)
+    && (!filtreAnneeActif || (p.periode || "").startsWith(filtreAnneeActif)));
 
   return (
     <div className="space-y-4">
-      <Card>
-        <h2 className="font-serif text-lg mb-3">Enregistrer un paiement</h2>
+      <Volet titre="Enregistrer un paiement" defautOuvert={ouvertParLien}>
         <div className="grid md:grid-cols-4 gap-3">
           <Field label="Lot">
-            <select className="w-full border border-stone-300 rounded px-2 py-1" value={lotId} onChange={(e) => setLotId(e.target.value)}>
+            <select className="w-full border border-stone-300 rounded px-2 py-1" value={lotId} onChange={(e) => setLotUrl(e.target.value)}>
               {lots.map((l) => <option key={l.id} value={l.id}>{l.nom}</option>)}
             </select>
           </Field>
@@ -123,28 +133,28 @@ function PaiementsInner() {
           className="mt-3 w-full md:w-auto px-4 py-2.5 md:py-1.5 rounded bg-slate-900 text-white text-sm disabled:opacity-50">
           {enregistrement ? "Enregistrement…" : "Enregistrer"}
         </button>
-      </Card>
+      </Volet>
 
       <Card>
         <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
           <h2 className="font-serif text-lg">Historique</h2>
-          <div className="flex items-center gap-2">
-            <select className="border border-stone-300 rounded px-2 py-1 text-sm" value={filtreLot}
+          <div className="flex items-center gap-2 w-full md:w-auto">
+            <select className="flex-1 min-w-0 md:flex-none border border-stone-300 rounded px-2 py-1 text-sm" value={filtreLotActif}
               onChange={(e) => setFiltreLot(e.target.value)} aria-label="Filtrer par lot">
               <option value="">Tous les lots</option>
               {lots.map((l) => <option key={l.id} value={l.id}>{l.nom}</option>)}
             </select>
-            <select className="border border-stone-300 rounded px-2 py-1 text-sm" value={filtreAnnee}
+            <select className="flex-1 min-w-0 md:flex-none border border-stone-300 rounded px-2 py-1 text-sm" value={filtreAnneeActif}
               onChange={(e) => setFiltreAnnee(e.target.value)} aria-label="Filtrer par année">
               <option value="">Toutes les années</option>
               {anneesPaiements.map((a) => <option key={a} value={a}>{a}</option>)}
             </select>
           </div>
         </div>
-        {(filtreLot || filtreAnnee) && (
+        {(filtreLotActif || filtreAnneeActif) && (
           <p className="text-xs text-stone-500 mb-2">
             {paiementsFiltres.length} ligne(s) sur {paiements.length}.{" "}
-            <button onClick={() => { setFiltreLot(""); setFiltreAnnee(""); }} className="text-emerald-700 underline">
+            <button onClick={() => majParams({ filtre_lot: null, annee: null })} className="text-emerald-700 underline">
               Tout afficher
             </button>
           </p>
@@ -169,7 +179,7 @@ function PaiementsInner() {
               key: p.id,
               cells: {
                 lot: l?.nom || p.lot_id,
-                periode: p.periode,
+                periode: fmois(p.periode),
                 attendu: eur(p.attendu),
                 verse: eur(p.montant),
                 statut: <Badge tone={tone}>{label}</Badge>,
@@ -199,5 +209,11 @@ function PaiementsInner() {
 }
 
 export default function Page() {
-  return <PaiementsInner />;
+  // useSearchParams lit l'adresse au moment du rendu : Next exige une frontière
+  // de suspension autour du composant qui s'en sert.
+  return (
+    <Suspense fallback={<p className="text-stone-500">Chargement…</p>}>
+      <PaiementsInner />
+    </Suspense>
+  );
 }

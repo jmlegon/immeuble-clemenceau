@@ -3,6 +3,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { cloneElement, isValidElement, useCallback, useEffect, useId, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { viderCache } from "@/lib/donnees";
 
 const I = { fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinecap: "round", strokeLinejoin: "round" };
 
@@ -54,14 +55,38 @@ const secondaires = tabs.filter((t) => !t.principal);
 
 export function Shell({ children }) {
   const pathname = usePathname();
+  // La fiche d'un lot vit sous /lots/<id> : sans cette comparaison par préfixe,
+  // aucun onglet ne s'allumait une fois entré dans une fiche.
+  const estActif = (href) => pathname === href || pathname.startsWith(`${href}/`);
   const router = useRouter();
   const [plusOuvert, setPlusOuvert] = useState(false);
 
   // Referme la feuille « Plus » dès qu'on change de page
   useEffect(() => { setPlusOuvert(false); }, [pathname]);
 
+  // Les fiches s'enregistrent champ par champ, à la sortie du champ. Or basculer
+  // vers une autre application ou verrouiller l'iPhone ne déclenche pas toujours
+  // ce `blur` : la saisie en cours partait alors sans être écrite. On force la
+  // sortie du champ au moment où la page cesse d'être visible.
+  useEffect(() => {
+    const sortirDuChamp = () => {
+      const actif = document.activeElement;
+      if (actif && typeof actif.blur === "function") actif.blur();
+    };
+    const surVisibilite = () => { if (document.hidden) sortirDuChamp(); };
+    window.addEventListener("pagehide", sortirDuChamp);
+    document.addEventListener("visibilitychange", surVisibilite);
+    return () => {
+      window.removeEventListener("pagehide", sortirDuChamp);
+      document.removeEventListener("visibilitychange", surVisibilite);
+    };
+  }, []);
+
   async function seDeconnecter() {
     await supabase.auth.signOut();
+    // Ces tables portent des noms de locataires et des montants : elles n'ont
+    // rien à faire en mémoire une fois la session fermée.
+    viderCache();
     router.replace("/login");
   }
 
@@ -88,7 +113,7 @@ export function Shell({ children }) {
       <nav className="hidden md:block bg-slate-800 border-b border-slate-700">
         <div className="max-w-5xl mx-auto flex overflow-x-auto">
           {tabs.map((t) => {
-            const active = pathname === t.href;
+            const active = estActif(t.href);
             return (
               <Link
                 key={t.href}
@@ -120,7 +145,7 @@ export function Shell({ children }) {
           <div className="relative bg-white rounded-t-2xl p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] shadow-xl">
             <div className="w-10 h-1 bg-stone-300 rounded-full mx-auto my-2" />
             {secondaires.map((t) => {
-              const active = pathname === t.href;
+              const active = estActif(t.href);
               return (
                 <Link
                   key={t.href}
@@ -142,7 +167,7 @@ export function Shell({ children }) {
       <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-slate-900 border-t border-slate-700 pb-[env(safe-area-inset-bottom)]">
         <div className="flex">
           {principaux.map((t) => {
-            const active = pathname === t.href;
+            const active = estActif(t.href);
             return (
               <Link
                 key={t.href}
@@ -161,7 +186,7 @@ export function Shell({ children }) {
             onClick={() => setPlusOuvert((v) => !v)}
             aria-expanded={plusOuvert}
             className={`flex-1 min-w-0 flex flex-col items-center gap-0.5 py-2 transition-colors ${
-              plusOuvert || secondaires.some((t) => t.href === pathname) ? "text-emerald-300" : "text-stone-400"
+              plusOuvert || secondaires.some((t) => estActif(t.href)) ? "text-emerald-300" : "text-stone-400"
             }`}
           >
             <span className="w-6 h-6">{icones.plus}</span>
@@ -258,14 +283,115 @@ export function Card({ children, className = "", ...rest }) {
  * soixante appels existants n'aient rien à changer. Un `id` déjà présent sur
  * l'enfant est respecté.
  */
-export function Field({ label, children }) {
+export function Field({ label, statut, children }) {
   const genere = useId();
   const id = isValidElement(children) && children.props.id ? children.props.id : genere;
   return (
     <div>
-      <label htmlFor={id} className="block text-xs text-stone-500 mb-1">{label}</label>
+      <div className="flex items-baseline justify-between gap-2 mb-1">
+        <label htmlFor={id} className="block text-xs text-stone-500">{label}</label>
+        {statut === "cours" && <span className="text-xs text-stone-400">enregistrement…</span>}
+        {statut === "ok" && <span className="text-xs text-emerald-600">enregistré</span>}
+      </div>
       {isValidElement(children) ? cloneElement(children, { id }) : children}
     </div>
+  );
+}
+
+/**
+ * Retour d'écriture par champ, pour les fiches qui s'enregistrent à la sortie
+ * du champ.
+ *
+ * Un bandeau par champ modifié faisait défiler une vingtaine de « X enregistré »
+ * pour une seule fiche remplie : le succès, banal et attendu, occupait toute la
+ * place. Il se dit maintenant dans le champ lui-même, et le bandeau est rendu
+ * aux erreurs, qui elles méritent qu'on s'arrête.
+ */
+export function useStatutsChamps() {
+  const [statuts, setStatuts] = useState({});
+  const minuteries = useRef({});
+
+  useEffect(() => {
+    const encours = minuteries.current;
+    return () => Object.values(encours).forEach(clearTimeout);
+  }, []);
+
+  const oublier = useCallback((cle) => {
+    setStatuts((s) => {
+      if (!(cle in s)) return s;
+      const suivant = { ...s };
+      delete suivant[cle];
+      return suivant;
+    });
+  }, []);
+
+  const debut = useCallback((cle) => {
+    clearTimeout(minuteries.current[cle]);
+    setStatuts((s) => ({ ...s, [cle]: "cours" }));
+  }, []);
+
+  const succes = useCallback((cle) => {
+    setStatuts((s) => ({ ...s, [cle]: "ok" }));
+    minuteries.current[cle] = setTimeout(() => oublier(cle), 2500);
+  }, [oublier]);
+
+  return { statuts, debut, succes, echec: oublier };
+}
+
+/**
+ * Écran d'attente à la forme du contenu attendu.
+ *
+ * « Chargement… » en haut d'une page vide donnait un saut de mise en page à
+ * chaque arrivée de données. Ces cartes grises occupent la place à l'avance.
+ */
+export function Squelette({ cartes = 2 }) {
+  return (
+    <div className="space-y-4" aria-busy="true">
+      <span className="sr-only">Chargement…</span>
+      {Array.from({ length: cartes }).map((_, i) => (
+        <div key={i} className="bg-white rounded-lg border border-stone-200 p-4">
+          <div className="h-4 w-40 bg-stone-200 rounded animate-pulse" />
+          <div className="mt-4 space-y-2">
+            <div className="h-3 bg-stone-100 rounded animate-pulse" />
+            <div className="h-3 w-5/6 bg-stone-100 rounded animate-pulse" />
+            <div className="h-3 w-2/3 bg-stone-100 rounded animate-pulse" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Formulaire de saisie replié derrière son intitulé.
+ *
+ * Loyers, Dépenses, Eau et Documents s'ouvraient tous sur un formulaire déplié :
+ * sur un téléphone, il fallait dépasser une à trois cartes de champs avant
+ * d'atteindre l'historique — ce qu'on vient consulter neuf fois sur dix. La
+ * saisie reste à un geste, mais ne prend plus l'écran par défaut.
+ */
+export function Volet({ titre, defautOuvert = false, children }) {
+  const [ouvert, setOuvert] = useState(defautOuvert);
+  return (
+    <Card>
+      <button
+        onClick={() => setOuvert((v) => !v)}
+        aria-expanded={ouvert}
+        className="w-full flex items-center justify-between gap-3 text-left"
+      >
+        <span className="flex items-center gap-2 min-w-0">
+          {/* Un « + » pour ouvrir, un chevron pour refermer : une croix aurait
+              pu se lire « supprimer » au-dessus d'un formulaire de saisie. */}
+          <span className="w-5 h-5 shrink-0 text-stone-400">
+            {ouvert
+              ? <svg viewBox="0 0 24 24" {...I}><path d="M18 15l-6-6-6 6" /></svg>
+              : <svg viewBox="0 0 24 24" {...I}><path d="M12 5v14M5 12h14" /></svg>}
+          </span>
+          <span className="font-serif text-lg truncate">{titre}</span>
+        </span>
+      </button>
+      {ouvert && <div className="mt-4 pt-4 border-t border-stone-100">{children}</div>}
+    </Card>
   );
 }
 

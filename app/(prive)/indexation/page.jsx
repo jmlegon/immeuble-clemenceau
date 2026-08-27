@@ -1,8 +1,10 @@
 "use client";
-import { useEffect, useState } from "react";
-import { Card, Field, Badge, DataTable, Bandeau, useRetour } from "@/components/Shell";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Card, Field, Badge, DataTable, Bandeau, Squelette, useRetour } from "@/components/Shell";
 import { supabase } from "@/lib/supabaseClient";
-import { eur, fdate, fmois, todayISO, calculRevision, prochaineOccurrence, revisionEnPeril, joursEntre, nombreOuNull } from "@/lib/helpers";
+import { rafraichir, useTable } from "@/lib/donnees";
+import { useParamUrl } from "@/lib/etat-url";
+import { eur, fdate, fmois, todayISO, calculRevision, prochaineOccurrence, revisionEnPeril, joursEntre, nombreOuNull, tableManquante } from "@/lib/helpers";
 
 // Échéance de révision la plus récemment passée : la prochaine occurrence
 // du jour-mois du bail, moins un an. Calcul sur la chaîne « AAAA-MM-JJ » :
@@ -24,25 +26,24 @@ function messageMigration(erreur) {
 }
 
 function IndexationInner() {
-  const [lots, setLots] = useState([]);
-  const [historique, setHistorique] = useState([]);
   const [saisies, setSaisies] = useState({});
-  const [chargement, setChargement] = useState(true);
-  const [tableAbsente, setTableAbsente] = useState(false);
   const [enCours, setEnCours] = useState(null);
+  const { donnees: tousLots, chargement } = useTable("lots");
+  const { donnees: historique, erreur } = useTable("indexations");
+  const tableAbsente = tableManquante(erreur);
+  // Un lot vacant n'a pas de loyer à réviser.
+  const lots = useMemo(() => tousLots.filter((l) => l.type !== "vacant"), [tousLots]);
+  // Lot visé par un lien du tableau de bord : on va le chercher dans la page
+  // et on l'entoure, plutôt que de laisser retrouver la bonne carte à l'œil.
+  const [cible] = useParamUrl("lot");
+  const dejaDefile = useRef(false);
   const retour = useRetour();
 
-  async function charger() {
-    const [{ data: l }, { data: h, error: hErr }] = await Promise.all([
-      supabase.from("lots").select("*").neq("type", "vacant").order("id"),
-      supabase.from("indexations").select("*").order("date_application", { ascending: false }),
-    ]);
-    if (hErr && /relation|does not exist|schema cache/i.test(hErr.message)) setTableAbsente(true);
-    setLots(l || []);
-    setHistorique(h || []);
-    setChargement(false);
-  }
-  useEffect(() => { charger(); }, []);
+  useEffect(() => {
+    if (chargement || !cible || dejaDefile.current) return;
+    dejaDefile.current = true;
+    document.getElementById(`lot-${cible}`)?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }, [chargement, cible]);
 
   function saisie(lotId) {
     return saisies[lotId] || { indice: "", periode: "", note: "", dateEffet: "", declarer: false, ancienLoyer: "" };
@@ -117,14 +118,14 @@ function IndexationInner() {
         errLot,
       );
       setEnCours(null);
-      charger();
+      rafraichir("indexations");
       return;
     }
 
     retour.succes(`${lot.nom} — loyer porté à ${eur(res.nouveauLoyer)}`);
     setSaisies((st) => ({ ...st, [lot.id]: { indice: "", periode: "", note: "", dateEffet: "", declarer: false, ancienLoyer: "" } }));
     setEnCours(null);
-    charger();
+    rafraichir("indexations", "lots");
   }
 
   // Archive une révision faite avant l'existence de cet écran : elle fait taire
@@ -155,10 +156,10 @@ function IndexationInner() {
     }
     retour.succes(`${lot.nom} — révision du ${fdate(s.dateEffet)} déclarée`);
     setSaisies((st) => ({ ...st, [lot.id]: { indice: "", periode: "", note: "", dateEffet: "", declarer: false, ancienLoyer: "" } }));
-    charger();
+    rafraichir("indexations");
   }
 
-  if (chargement) return <p className="text-stone-500">Chargement…</p>;
+  if (chargement) return <Squelette cartes={3} />;
 
   if (tableAbsente) {
     return (
@@ -193,7 +194,11 @@ function IndexationInner() {
         const peril = appliquee ? null : revisionEnPeril(echeance, todayISO());
 
         return (
-          <Card key={lot.id}>
+          <Card
+            key={lot.id}
+            id={`lot-${lot.id}`}
+            className={`scroll-mt-4 ${cible === lot.id ? "ring-2 ring-emerald-300" : ""}`}
+          >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="font-serif text-lg">{lot.nom}</p>
@@ -323,5 +328,11 @@ function IndexationInner() {
 }
 
 export default function Page() {
-  return <IndexationInner />;
+  // useSearchParams lit l'adresse au moment du rendu : Next exige une frontière
+  // de suspension autour du composant qui s'en sert.
+  return (
+    <Suspense fallback={<p className="text-stone-500">Chargement…</p>}>
+      <IndexationInner />
+    </Suspense>
+  );
 }

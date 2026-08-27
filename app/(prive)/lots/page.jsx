@@ -1,20 +1,13 @@
 "use client";
-import { useEffect, useState } from "react";
-import { Card, Badge, Field, Bandeau, useRetour } from "@/components/Shell";
+import { useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { Card, Badge, Field, Bandeau, Squelette, useRetour } from "@/components/Shell";
 import { supabase } from "@/lib/supabaseClient";
-import { eur, compteurLabels, nombreOuNull } from "@/lib/helpers";
+import { rafraichir, useTable } from "@/lib/donnees";
+import { eur, TYPES_LOT, labelTypeLot } from "@/lib/helpers";
 
-const TYPES_LOT = [
-  { cle: "commercial", label: "Bail commercial" },
-  { cle: "résidentiel-vide", label: "Location vide" },
-  { cle: "résidentiel-meublé", label: "Location meublée" },
-  { cle: "vacant", label: "Vacant" },
-];
-
-const PERIODICITES = [
-  { cle: "mensuelle", label: "Mensuelle" },
-  { cle: "trimestrielle", label: "Trimestrielle" },
-];
+const I = { fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinecap: "round", strokeLinejoin: "round" };
 
 // L'identifiant est la clé primaire du lot, reprise par les paiements, les
 // dépenses et les documents : on le fabrique une fois, puis il ne bouge plus.
@@ -25,39 +18,22 @@ function identifiantDepuis(nom) {
     .replace(/^-|-$/g, "").slice(0, 24);
 }
 
+/**
+ * Index des lots.
+ *
+ * L'écran dépliait auparavant une vingtaine de champs de saisie sous chaque
+ * lot : consulter revenait à modifier, et la fiche d'un locataire restait
+ * éparpillée entre cinq onglets. Le détail vit maintenant dans /lots/[id], où
+ * bail, encaissements, révisions, eau, documents et dépenses se lisent d'une
+ * traite. Il ne reste ici que ce qu'une liste doit faire : montrer et mener.
+ */
 function LotsInner() {
-  const [lots, setLots] = useState([]);
-  const [openId, setOpenId] = useState(null);
-  const [chargement, setChargement] = useState(true);
-  // Incrémenté quand une écriture est refusée : change la clé du panneau, ce qui
-  // le remonte et redonne aux champs (non contrôlés) la valeur réellement en base.
-  const [revisions, setRevisions] = useState({});
+  const { donnees: lots, chargement } = useTable("lots");
   const [creation, setCreation] = useState(false);
   const [enCreation, setEnCreation] = useState(false);
   const [nouveau, setNouveau] = useState({ id: "", nom: "", localisation: "", type: "résidentiel-vide" });
+  const router = useRouter();
   const retour = useRetour();
-
-  async function charger() {
-    const { data } = await supabase.from("lots").select("*").order("id");
-    setLots(data || []);
-    setChargement(false);
-  }
-  useEffect(() => { charger(); }, []);
-
-  async function updateLot(id, patch, libelle) {
-    const avant = lots.find((l) => l.id === id);
-    setLots((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)));
-
-    const { error } = await supabase.from("lots").update(patch).eq("id", id);
-    if (error) {
-      // L'écran ne doit pas continuer d'afficher une valeur que la base a refusée.
-      setLots((prev) => prev.map((l) => (l.id === id ? avant : l)));
-      setRevisions((r) => ({ ...r, [id]: (r[id] || 0) + 1 }));
-      retour.echec(`${libelle} : modification non enregistrée`, error);
-      return;
-    }
-    retour.succes(`${libelle} enregistré`);
-  }
 
   function majNouveau(patch) {
     setNouveau((n) => {
@@ -92,14 +68,12 @@ function LotsInner() {
     setEnCreation(false);
     if (error) { retour.echec("Le lot n'a pas été créé", error); return; }
 
-    retour.succes(`Lot « ${nouveau.nom.trim()} » créé`);
-    setNouveau({ id: "", nom: "", localisation: "", type: "résidentiel-vide" });
-    setCreation(false);
-    await charger();
-    setOpenId(id);
+    await rafraichir("lots");
+    // Droit sur la fiche : le reste des informations se renseigne là-bas.
+    router.push(`/lots/${id}`);
   }
 
-  if (chargement) return <p className="text-stone-500">Chargement…</p>;
+  if (chargement) return <Squelette cartes={4} />;
 
   return (
     <div className="space-y-4">
@@ -151,130 +125,33 @@ function LotsInner() {
       )}
 
       {lots.map((lot) => (
-        <Card key={lot.id}>
-          <button className="w-full flex items-center justify-between text-left" onClick={() => setOpenId(openId === lot.id ? null : lot.id)}>
-            <div>
-              <p className="text-xs text-stone-500">{lot.localisation}</p>
-              <p className="font-serif text-lg">{lot.nom}</p>
+        <Link
+          key={lot.id}
+          href={`/lots/${lot.id}`}
+          className="block bg-white rounded-lg border border-stone-200 p-4 hover:border-stone-300 active:bg-stone-50"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              {lot.localisation && <p className="text-xs text-stone-500">{lot.localisation}</p>}
+              <p className="font-serif text-lg break-words">{lot.nom}</p>
               <p className="text-sm text-stone-500">{lot.locataire || "Vacant"}</p>
             </div>
-            <div className="text-right">
-              <p className="font-medium">{lot.loyer_mensuel_ht ? eur(lot.loyer_mensuel_ht) + " / mois" : "—"}</p>
-              <Badge tone={lot.type === "vacant" ? "gray" : lot.type === "commercial" ? "green" : "amber"}>{lot.type}</Badge>
-            </div>
-          </button>
-
-          {openId === lot.id && (
-            <div key={`${lot.id}-${revisions[lot.id] || 0}`} className="mt-4 pt-4 border-t border-stone-100 grid md:grid-cols-2 gap-4 text-sm">
-              <Field label="Type de lot">
-                <select className="w-full border border-stone-300 rounded px-2 py-1" value={lot.type || ""}
-                  onChange={(e) => updateLot(lot.id, { type: e.target.value }, "Type de lot")}>
-                  {TYPES_LOT.map((t) => <option key={t.cle} value={t.cle}>{t.label}</option>)}
-                </select>
-              </Field>
-              <Field label="Nom du lot">
-                <input className="w-full border border-stone-300 rounded px-2 py-1" defaultValue={lot.nom || ""}
-                  onBlur={(e) => updateLot(lot.id, { nom: e.target.value }, "Nom du lot")} />
-              </Field>
-              <Field label="Localisation">
-                <input className="w-full border border-stone-300 rounded px-2 py-1" defaultValue={lot.localisation || ""}
-                  onBlur={(e) => updateLot(lot.id, { localisation: e.target.value }, "Localisation")} />
-              </Field>
-              <Field label="Locataire">
-                <input className="w-full border border-stone-300 rounded px-2 py-1" defaultValue={lot.locataire || ""}
-                  onBlur={(e) => updateLot(lot.id, { locataire: e.target.value }, "Locataire")} />
-              </Field>
-              <Field label="N° SIRET">
-                <input className="w-full border border-stone-300 rounded px-2 py-1" defaultValue={lot.siret || ""}
-                  onBlur={(e) => updateLot(lot.id, { siret: e.target.value }, "SIRET")} placeholder="À renseigner" />
-              </Field>
-              <Field label="Loyer mensuel HT (€)">
-                <input type="number" className="w-full border border-stone-300 rounded px-2 py-1" defaultValue={lot.loyer_mensuel_ht ?? ""}
-                  onBlur={(e) => updateLot(lot.id, { loyer_mensuel_ht: nombreOuNull(e.target.value) }, "Loyer mensuel")} />
-              </Field>
-              {lot.type === "commercial" && (
-                <Field label="Taux de TVA (%)">
-                  <input type="number" className="w-full border border-stone-300 rounded px-2 py-1" defaultValue={lot.tva_taux ?? ""}
-                    onBlur={(e) => updateLot(lot.id, { tva_taux: nombreOuNull(e.target.value) }, "Taux de TVA")} />
-                </Field>
-              )}
-              <Field label="Indice de référence">
-                <input className="w-full border border-stone-300 rounded px-2 py-1" defaultValue={lot.indice_type || ""}
-                  onBlur={(e) => updateLot(lot.id, { indice_type: e.target.value }, "Indice de référence")} />
-              </Field>
-              <Field label="Valeur de l'indice de base">
-                <input type="number" className="w-full border border-stone-300 rounded px-2 py-1" defaultValue={lot.indice_valeur ?? ""}
-                  onBlur={(e) => updateLot(lot.id, { indice_valeur: nombreOuNull(e.target.value) }, "Valeur de l'indice")} />
-              </Field>
-              <Field label="Période de l'indice de base">
-                <input className="w-full border border-stone-300 rounded px-2 py-1" defaultValue={lot.indice_periode || ""}
-                  onBlur={(e) => updateLot(lot.id, { indice_periode: e.target.value }, "Période de l'indice")} />
-              </Field>
-              <Field label="Révision (JJ-MM)">
-                <input className="w-full border border-stone-300 rounded px-2 py-1" defaultValue={lot.revision_jour_mois || ""}
-                  onBlur={(e) => updateLot(lot.id, { revision_jour_mois: e.target.value }, "Date de révision")} />
-              </Field>
-              <Field label="Avance / provision sur charges (€)">
-                <input type="number" className="w-full border border-stone-300 rounded px-2 py-1" defaultValue={lot.avance_eau || 0}
-                  onBlur={(e) => updateLot(lot.id, { avance_eau: nombreOuNull(e.target.value) ?? 0 }, "Avance sur charges")} />
-              </Field>
-              <Field label="Dépôt de garantie (€)">
-                <input type="number" className="w-full border border-stone-300 rounded px-2 py-1" defaultValue={lot.depot_garantie ?? ""}
-                  onBlur={(e) => updateLot(lot.id, { depot_garantie: nombreOuNull(e.target.value) }, "Dépôt de garantie")} />
-              </Field>
-              <Field label="Début de bail">
-                <input type="date" className="w-full border border-stone-300 rounded px-2 py-1" defaultValue={lot.debut_bail || ""}
-                  onBlur={(e) => updateLot(lot.id, { debut_bail: e.target.value || null }, "Début de bail")} />
-              </Field>
-              <Field label="Fin de bail">
-                <input type="date" className="w-full border border-stone-300 rounded px-2 py-1" defaultValue={lot.fin_bail || ""}
-                  onBlur={(e) => updateLot(lot.id, { fin_bail: e.target.value }, "Fin de bail")} />
-              </Field>
-              <Field label="Date de départ du locataire">
-                <input type="date" className="w-full border border-stone-300 rounded px-2 py-1" defaultValue={lot.date_depart || ""}
-                  onBlur={(e) => updateLot(lot.id, { date_depart: e.target.value || null }, "Date de départ")} />
-              </Field>
-              <Field label="Périodicité de facturation">
-                <select className="w-full border border-stone-300 rounded px-2 py-1" value={lot.periodicite_facturation || "mensuelle"}
-                  onChange={(e) => updateLot(lot.id, { periodicite_facturation: e.target.value }, "Périodicité")}>
-                  {PERIODICITES.map((p) => <option key={p.cle} value={p.cle}>{p.label}</option>)}
-                </select>
-              </Field>
-              <Field label="Compteur d'eau rattaché">
-                <select className="w-full border border-stone-300 rounded px-2 py-1" value={lot.compteur_id || ""}
-                  onChange={(e) => updateLot(lot.id, { compteur_id: e.target.value || null }, "Compteur d'eau")}>
-                  <option value="">Aucun</option>
-                  {Object.entries(compteurLabels).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
-                </select>
-              </Field>
-              <Field label="Ancien locataire">
-                <input className="w-full border border-stone-300 rounded px-2 py-1" defaultValue={lot.ancien_locataire || ""}
-                  onBlur={(e) => updateLot(lot.id, { ancien_locataire: e.target.value }, "Ancien locataire")} />
-              </Field>
-              {lot.date_depart && (lot.depot_garantie || 0) > 0 && (
-                <>
-                  <Field label="Dépôt restitué le">
-                    <input type="date" className="w-full border border-stone-300 rounded px-2 py-1" defaultValue={lot.depot_restitue_le || ""}
-                      onBlur={(e) => updateLot(lot.id, { depot_restitue_le: e.target.value || null }, "Date de restitution")} />
-                  </Field>
-                  <Field label="Montant restitué (€)">
-                    <input type="number" className="w-full border border-stone-300 rounded px-2 py-1" defaultValue={lot.depot_montant_restitue ?? ""}
-                      onBlur={(e) => updateLot(lot.id, { depot_montant_restitue: nombreOuNull(e.target.value) }, "Montant restitué")} />
-                  </Field>
-                  <Field label="Retenues éventuelles (motif)">
-                    <input className="w-full border border-stone-300 rounded px-2 py-1" defaultValue={lot.depot_retenues_note || ""}
-                      onBlur={(e) => updateLot(lot.id, { depot_retenues_note: e.target.value }, "Motif des retenues")} />
-                  </Field>
-                </>
-              )}
-              {lot.incomplet && lot.incomplet.length > 0 && (
-                <div className="md:col-span-2 bg-amber-50 border border-amber-200 rounded p-2 text-amber-800 text-xs">
-                  {lot.incomplet.join(" · ")}
+            <div className="flex items-center gap-3 shrink-0">
+              <div className="text-right">
+                <p className="font-medium">{lot.loyer_mensuel_ht ? `${eur(lot.loyer_mensuel_ht)} / mois` : "—"}</p>
+                <div className="mt-1">
+                  <Badge tone={lot.type === "vacant" ? "gray" : lot.type === "commercial" ? "green" : "amber"}>
+                    {labelTypeLot(lot.type)}
+                  </Badge>
                 </div>
-              )}
+              </div>
+              <svg viewBox="0 0 24 24" {...I} className="w-5 h-5 text-stone-300"><path d="M9 18l6-6-6-6" /></svg>
             </div>
+          </div>
+          {lot.incomplet && lot.incomplet.length > 0 && (
+            <p className="mt-3 text-xs text-amber-700">À compléter : {lot.incomplet.join(" · ")}</p>
           )}
-        </Card>
+        </Link>
       ))}
       <Bandeau retour={retour} />
     </div>

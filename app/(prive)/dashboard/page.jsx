@@ -71,7 +71,26 @@ function DashboardInner() {
     // reconstituée ici, faute de quoi le calcul suivant butterait sur un null.
     const ligne = data || { id: `${lot.id}-${periode}`, lot_id: lot.id, periode, attendu, montant: attendu };
     majTable("paiements", (prev) => [ligne, ...prev]);
-    retour.succes(`${lot.nom} — ${fmois(periode)} encaissé (${eur(attendu)})`);
+
+    // Un appui enregistre de l'argent reçu, et la ligne quitte aussitôt la
+    // liste : viser à côté éteindrait silencieusement une alerte d'impayé
+    // réelle. L'annulation n'est proposée que si la base nous a rendu
+    // l'identifiant de la ligne — sans lui, la suppression ne viserait rien.
+    const annulable = Boolean(data?.id);
+    retour.succes(
+      `${lot.nom} — ${fmois(periode)} encaissé (${eur(attendu)})`,
+      annulable ? { label: "Annuler", onClick: () => annulerEncaissement(data, lot, periode) } : null,
+    );
+  }
+
+  async function annulerEncaissement(ligne, lot, periode) {
+    const { error } = await supabase.from("paiements").delete().eq("id", ligne.id);
+    if (error) {
+      retour.echec(`${lot.nom} — ${fmois(periode)} : l'encaissement n'a pas pu être annulé`, error);
+      return;
+    }
+    majTable("paiements", (prev) => prev.filter((p) => p.id !== ligne.id));
+    retour.succes(`${lot.nom} — ${fmois(periode)} : encaissement annulé`);
   }
 
   if (chargement) return <Squelette cartes={3} />;

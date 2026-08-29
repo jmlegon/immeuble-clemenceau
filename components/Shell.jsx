@@ -411,7 +411,7 @@ export function Volet({ titre, defautOuvert = false, children }) {
  * jusqu'à ce qu'on la ferme — on ne fait pas disparaître une mauvaise nouvelle.
  */
 export function useRetour() {
-  const [etat, setEtat] = useState(null); // null | { type: "ok" | "erreur", message }
+  const [etat, setEtat] = useState(null); // null | { type: "ok" | "erreur", message, action }
   const minuterie = useRef(null);
 
   useEffect(() => () => clearTimeout(minuterie.current), []);
@@ -421,10 +421,18 @@ export function useRetour() {
     setEtat(null);
   }, []);
 
-  const succes = useCallback((message = "Enregistré") => {
+  /**
+   * `action` ajoute un bouton au bandeau : `{ label, onClick }`.
+   *
+   * C'est ce qui permet d'annuler un geste en un appui — un encaissement
+   * enregistré d'un clic doit pouvoir se défaire aussi vite qu'il s'est fait.
+   * Le bandeau reste alors plus longtemps : deux secondes et demie suffisent à
+   * lire « enregistré », pas à se rendre compte qu'on a visé la mauvaise ligne.
+   */
+  const succes = useCallback((message = "Enregistré", action = null) => {
     clearTimeout(minuterie.current);
-    setEtat({ type: "ok", message });
-    minuterie.current = setTimeout(() => setEtat(null), 2500);
+    setEtat({ type: "ok", message, action });
+    minuterie.current = setTimeout(() => setEtat(null), action ? 9000 : 2500);
   }, []);
 
   // Le détail technique de Supabase complète le message métier sans le remplacer :
@@ -461,6 +469,14 @@ export function Bandeau({ retour }) {
           )}
         </span>
         <p className="text-sm flex-1 min-w-0 break-words">{etat.message}</p>
+        {etat.action && (
+          <button
+            onClick={() => { retour.fermer(); etat.action.onClick(); }}
+            className="shrink-0 text-sm font-medium underline underline-offset-2 text-emerald-800 px-1 py-0.5"
+          >
+            {etat.action.label}
+          </button>
+        )}
         <button
           onClick={retour.fermer}
           aria-label="Fermer le message"
